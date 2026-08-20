@@ -1,0 +1,66 @@
+# Local editor and tooling state
+/.vscode/
+/.idea/
+/.agents/
+/.codex/
+/.cache/
+*.code-workspace
+
+# STM32CubeMX auxiliary metadata (.ioc is kept as project source)
+/.mxproject
+
+# Build directories
+/build/
+/Debug/
+/Release/
+/cmake-build-*/
+/out/
+
+# Compiler intermediate files
+*.o
+*.obj
+*.d
+*.dep
+*.su
+*.a
+*.lib
+
+# Firmware and linker outputs
+*.elf
+*.axf
+*.out
+*.hex
+*.bin
+*.map
+*.lst
+
+# CMake and Ninja generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+build.ninja
+.ninja_deps
+.ninja_log
+
+# STM32CubeIDE and Eclipse local metadata
+/.settings/
+/.project
+/.cproject
+*.launch
+
+# Local documentation copies (keep Markdown project documentation)
+/docs/datasheet/
+/docs/原理图/
+/docs/stm32h7_ethernet_project_docs
+
+# OS, logs, temporary and backup files
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
