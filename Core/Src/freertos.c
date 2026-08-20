@@ -27,8 +27,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
-#include "board_ethernet.h"
-#include "ethernet_mdio.h"
+#include "lan8720.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -38,9 +37,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define LAN8720_PHY_ADDRESS       0U
-#define LAN8720_REG_ID1           2U
-#define LAN8720_REG_ID2           3U
+#define LAN8720_PHY_ADDRESS                 0U
+
+#define M1_AUTO_NEGOTIATION_TIMEOUT_MS      5000U
+#define M1_AUTO_NEGOTIATION_POLL_PERIOD_MS  100U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -119,32 +119,72 @@ void MX_FREERTOS_Init(void) {
 void StartBootstrapTask(void *argument)
 {
   /* USER CODE BEGIN StartBootstrapTask */
-  /* Infinite loop */
-  for(;;)
+  printf("[M1] BootstrapTask started\r\n");
+
+  Lan8720Status phy_status = {0};
+  uint32_t elapsed_ms = 0U;
+
+  if (!Lan8720_RestartAutoNegotiation(LAN8720_PHY_ADDRESS))
   {
-    
-    osDelay(1);
-  }
-  uint32_t phy_id1 = 0U;
-  uint32_t phy_id2 = 0U;
-
-  osDelay(25U);
-
-  BoardEthernet_PhyResetAssert();
-  osDelay(1U);
-
-  BoardEthernet_PhyResetRelease();
-  osDelay(10U);
-
-  if (EthernetMdio_Read(LAN8720_PHY_ADDRESS, LAN8720_REG_ID1, &phy_id1) && 
-      EthernetMdio_Read(LAN8720_PHY_ADDRESS, LAN8720_REG_ID2, &phy_id2))
-  {
-      printf("[M1] PHY ID1=0x%04lX ID2=0x%04lX\r\n", (unsigned long)phy_id1, (unsigned long)phy_id2);
+    printf("[M1] Auto-negotiation restart failed\r\n");
   }
   else
   {
-      printf("[M1] PHY ID read failed\r\n");
+    printf("[M1] Auto-negotiation started\r\n");
+    while (elapsed_ms < M1_AUTO_NEGOTIATION_TIMEOUT_MS)
+    {
+      if (!Lan8720_GetStatus(LAN8720_PHY_ADDRESS, &phy_status))
+      {
+        printf("[M1] PHY status read failed\r\n");
+        break;
+      }
+
+      if (phy_status.auto_negotiation_complete && phy_status.link_up)
+      {
+        break;
+      }
+
+      osDelay(M1_AUTO_NEGOTIATION_POLL_PERIOD_MS);
+      elapsed_ms += M1_AUTO_NEGOTIATION_POLL_PERIOD_MS;
+    }
+
+    if (phy_status.auto_negotiation_complete && phy_status.link_up)
+    {
+      printf("[M1] Link up\r\n");
+
+      if (phy_status.speed == LAN8720_SPEED_100M)
+      {
+        printf("[M1] Speed=100M\r\n");
+      }
+      else if (phy_status.speed == LAN8720_SPEED_10M)
+      {
+        printf("[M1] Speed=10M\r\n");
+      }
+
+      if (phy_status.duplex == LAN8720_DUPLEX_FULL)
+      {
+        printf("[M1] Duplex=Full\r\n");
+      }
+      else if (phy_status.duplex == LAN8720_DUPLEX_HALF)
+      {
+        printf("[M1] Duplex=Half\r\n");
+      }
+    }
+    else
+    {
+      printf("[M1] Auto-negotiation timeout or link down\r\n");
+    }
+
   }
+
+  /* Infinite loop */
+  for(;;)
+  {
+    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+    
+    osDelay(1000);
+  }
+  
   /* USER CODE END StartBootstrapTask */
 }
 
