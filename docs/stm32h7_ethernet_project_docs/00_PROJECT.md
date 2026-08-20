@@ -1,6 +1,6 @@
 # STM32H7 Ethernet 通用驱动项目
 
-- 状态：Active / Bootstrap
+- 状态：Active / M1 Ready
 - 第一验证平台：STM32H743VIT6
 - 第一验证 PHY：LAN8720AI
 - 接口：RMII
@@ -78,7 +78,20 @@ STM32 HAL / Hardware
 
 ### M0：项目基线
 
-完成项目文档、硬件事实、工程边界和基础目录。
+状态：已完成运行基线，Debug / Release fresh build 的重复构建记录待补。
+
+已完成：
+
+- 项目文档与硬件基线；
+- 实际代码仓库结构；
+- CubeMX 生成代码与手工代码边界；
+- FreeRTOS / CMSIS-RTOS v2 最小工程；
+- TIM6 HAL Timebase；
+- BootstrapTask；
+- LED 心跳；
+- USART1 基础调试输出；
+- BSP 调试重定向；
+- 上板运行验证。
 
 ### M1：PHY Bring-up
 
@@ -163,8 +176,9 @@ STM32 HAL / Hardware
 3. 读取 `02_HARDWARE_BASELINE.md`；
 4. 读取 `06_DECISIONS.md`；
 5. 读取 `07_STATUS.md`；
-6. 根据当前状态和用户当前需求确定本对话职责；
-7. 只在确定的职责范围内工作。
+6. 读取 `08_HANDOFF.md`；
+7. 根据当前状态和用户当前需求确定本对话职责；
+8. 只在确定的职责范围内工作。
 
 如果用户已经明确指定当前任务，则直接围绕该任务工作，不重新安排整个项目。
 
