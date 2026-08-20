@@ -45,6 +45,8 @@
 
 #define AUTO_NEGOTIATION_TIMEOUT_MS      5000U
 #define AUTO_NEGOTIATION_POLL_PERIOD_MS  100U
+
+#define PHY_LINK_POLL_PERIOD_MS  200U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -125,6 +127,10 @@ void StartBootstrapTask(void *argument)
   /* USER CODE BEGIN StartBootstrapTask */
   Lan8720Status phy_status = {0};
   bool phy_ready = false;
+
+  Lan8720Status last_phy_status = {0};
+  bool last_status_valid = false;
+
   uint32_t elapsed_ms = 0U;
 
   printf("[M1] BootstrapTask started\r\n");
@@ -159,7 +165,7 @@ void StartBootstrapTask(void *argument)
     }
     else
     {
-       printf("[M1] Auto-negotiation started\r\n");
+      printf("[M1] Auto-negotiation started\r\n");
 
       elapsed_ms = 0U;
 
@@ -201,6 +207,9 @@ void StartBootstrapTask(void *argument)
         {
           printf("[M1] Duplex=Half\r\n");
         }
+
+        last_phy_status = phy_status;
+        last_status_valid = true;
       }
       else
       {
@@ -212,9 +221,45 @@ void StartBootstrapTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+    Lan8720Status current_phy_status = {0};
+
+    if (Lan8720_GetStatus(LAN8720_PHY_ADDRESS, &current_phy_status))
+    {
+      if (!last_status_valid || current_phy_status.link_up != last_phy_status.link_up)
+      {
+        if (current_phy_status.link_up)
+        {
+          printf("[PHY] Link up\r\n");
+
+          if (current_phy_status.speed == LAN8720_SPEED_100M)
+          {
+            printf("[PHY] Speed=100M\r\n");
+          }
+          else if (current_phy_status.speed == LAN8720_SPEED_10M)
+          {
+            printf("[PHY] Speed=10M\r\n");
+          }
+
+          if (current_phy_status.duplex == LAN8720_DUPLEX_FULL)
+          {
+            printf("[PHY] Duplex=Full\r\n");
+          }
+          else if (current_phy_status.duplex == LAN8720_DUPLEX_HALF)
+          {
+            printf("[PHY] Duplex=Half\r\n");
+          }
+        }
+        else
+        {
+          printf("[PHY] Link down\r\n");
+        }
+
+        last_phy_status = current_phy_status;
+        last_status_valid = true;
+      }
+    }
     
-    osDelay(1000);
+    osDelay(PHY_LINK_POLL_PERIOD_MS);
   }
   
   /* USER CODE END StartBootstrapTask */

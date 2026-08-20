@@ -131,6 +131,11 @@ bool Lan8720_GetStatus(uint32_t phy_address, Lan8720Status *status)
     status->link_up = (bmsr & LAN8720_BMSR_LINK_STATUS) != 0U;
     status->auto_negotiation_complete = (bmsr & LAN8720_BMSR_AUTO_NEGOTIATION_COMPLETE) != 0U;
 
+    if (!status->link_up)
+    {
+        return true;
+    }
+
     if (!EthernetMdio_Read(phy_address, LAN8720_REG_PHY_SPECIAL_CONTROL, &phy_status))
     {
         return false;
