@@ -22,30 +22,60 @@
 - USART1 使用 PA9 TX / PA10 RX，115200 8N1；
 - 调试中发现当前 PCB UART 丝印与有效原理图 TX/RX 标识相反，已记录到 `02_HARDWARE_BASELINE.md`。
 
-说明：本工作单元已经完成一次可编译、可烧录、可运行的 M0 固件验证；`工程可重复编译` 项保留未勾选，待后续明确执行并记录 Debug / Release fresh build 后再关闭。
+说明：M0 已经完成一次可编译、可烧录、可运行的固件验证；`工程可重复编译` 项保留未勾选，待后续明确执行并记录 Debug / Release fresh build 后再关闭。
 
 ## M1：PHY Bring-up
 
-测试：
+### 核心 Bring-up
 
-- [ ] PHY Reset；
-- [ ] MDIO Read；
-- [ ] MDIO Write；
-- [ ] PHY ID；
-- [ ] PHY Address；
-- [ ] Strap 配置；
-- [ ] Auto-negotiation；
-- [ ] Link Up；
-- [ ] Link Down；
-- [ ] 10/100 Mbit/s 状态；
-- [ ] Half/Full Duplex 状态；
-- [ ] 连续插拔网线；
+- [x] PHY Reset；
+- [x] MDIO Read；
+- [x] MDIO Write；
+- [x] PHY ID；
+- [x] PHY Address；
+- [x] Strap 配置；
+- [x] Auto-negotiation；
+- [x] Link Up；
+- [x] Link Down；
+- [x] 100 Mbit/s 状态；
+- [x] Full Duplex 状态；
+- [x] 单次网线拔出 / 插回恢复。
+
+M1 当前上板结果：
+
+```text
+PHY ID1     = 0x0007
+PHY ID2     = 0xC0F1
+Reg18       = 0x60E0
+PHY Address = 0
+MODE        = 111
+Link        = Up / Down 可检测
+Speed       = 100M
+Duplex      = Full
+```
+
+### 补充稳定性与覆盖测试
+
+- [ ] 10 Mbit/s 实际链路；
+- [ ] Half Duplex 实际链路；
+- [ ] 连续多次插拔网线；
 - [ ] 多次 STM32 重启；
 - [ ] 多次 PHY Reset。
 
-退出条件：
+### 退出条件
 
-PHY 在重复上电、Reset、插拔网线后均可稳定返回正确状态。
+最小 Bring-up 退出条件：
+
+- Reset 可控；
+- MDIO Read / Write 正常；
+- PHY ID / Address / Strap 正确；
+- Auto-negotiation 正常；
+- Link / Speed / Duplex 可读取；
+- 单次拔插网线可恢复。
+
+上述最小 Bring-up 条件已完成，可进入 M2。
+
+连续多次插拔、重复 MCU Reset、重复 PHY Reset，以及 10M / Half Duplex 实际链路作为补充稳定性和覆盖测试保留，不把尚未执行的测试写成已通过。
 
 ## M2：MAC / DMA
 

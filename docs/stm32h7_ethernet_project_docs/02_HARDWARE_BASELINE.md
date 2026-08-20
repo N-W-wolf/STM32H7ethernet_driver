@@ -62,12 +62,9 @@ LAN8720A Datasheet 明确支持使用 25 MHz 晶振并向 MAC 输出 50 MHz RMII
 - LAN8720AI 负责产生 RMII 50 MHz REF_CLK；
 - STM32H743 从 PA1 接收该时钟。
 
-仍需在 M1 Bring-up 时完成两项确认：
+M1 已完成 PHY Reset、MDIO、Auto-negotiation 和 Link 上板验证，这从功能上支持当前 REF_CLK 路径能够工作的判断。
 
-1. 核对 `nINTSEL` strap 的实际电阻/LED连接；
-2. 上板测量 PA1 / REFCLKO 是否稳定输出约 50 MHz。
-
-在这两项完成前，不把 nINTSEL 的最终逻辑电平写死为已实测事实。
+但当前未使用示波器或逻辑分析仪独立测量 25 MHz 晶振及 PA1 / RMII_REF_CLK，因此不把“PA1 实测约 50 MHz”写成 Measured 事实。
 
 ## 4. PHY Reset
 
@@ -81,9 +78,13 @@ PC0_ETH_RESET
 LAN8720AI nRST
 ```
 
-PHY reset 的有效电平和最小时序必须按 LAN8720A Datasheet 实现。
+当前软件由 CubeMX 初始化阶段先将 `ETH_RESET` 拉低，再由 BSP 接口释放 PHY Reset。
 
-具体 Reset 低电平持续时间、释放后等待时间在 PHY 驱动任务中确定并记录到 `DECISIONS.md`。
+M1 已上板确认：
+
+- PC0 可以控制 LAN8720AI nRST；
+- Reset 释放后可以通过 MDIO 读取正确 PHY ID；
+- 软件使用 PHY ID polling + timeout 判断 PHY 已进入可管理状态，而不是依赖固定释放后延时判断 ready。
 
 ## 5. MDIO / MDC
 
@@ -94,33 +95,43 @@ STM32 PA2  ↔ LAN8720 MDIO
 STM32 PC1  → LAN8720 MDC
 ```
 
-PHY Driver 不应直接操作 STM32 GPIO bit-bang MDIO；第一版计划通过 STM32 Ethernet MAC/HAL 提供的 PHY Management 接口访问 PHY Register。
+当前第一版通过 STM32 Ethernet MAC/HAL PHY Management 接口访问 LAN8720 Clause 22 寄存器，不使用 GPIO bit-bang MDIO。
 
-实际 HAL 接口以当前工程所使用的 STM32CubeH7 HAL 版本源码为准。
+当前工程 HAL 为 STM32H7 HAL 1.11.6；M1 已完成 MDIO Read / Write 上板验证。
 
-## 6. PHY Strap：待确认项
+## 6. PHY Strap
 
-以下内容需要在 M1 中结合原理图细节、LAN8720A Datasheet 和寄存器实测确认：
-
-- PHYAD0 → 最终 PHY Address；
-- MODE[2:0] → 默认速率 / 双工 / Auto-negotiation 模式；
-- nINTSEL → nINT / REFCLKO 选择；
-- REGOFF → 内部 1.2 V regulator 配置；
-- LED strap 对上述配置的影响。
-
-不要仅根据 LAN8720A 内部默认上下拉直接假定最终 strap 值，因为这些脚同时连接外部电阻、LED 或 MCU 输入。
-
-M1 完成后，应把最终结果补充为：
+M1 上板读取 LAN8720 Special Modes Register（Reg 18）得到：
 
 ```text
-PHY Address:
-MODE[2:0]:
-nINTSEL:
-REGOFF:
-Boot default mode:
+Reg18       = 0x60E0
+MODE[2:0]   = 111
+PHYAD[4:0]  = 00000
 ```
 
-并给出寄存器读取结果作为验证。
+因此当前第一验证板已确认：
+
+```text
+PHY Address : 0
+MODE[2:0]   : 111
+Boot mode   : All capable, Auto-negotiation enabled
+```
+
+PHY ID 实测：
+
+```text
+PHY ID1 = 0x0007
+PHY ID2 = 0xC0F1
+```
+
+与 LAN8720 系列器件标识一致。
+
+结合当前有效原理图与 LAN8720A Datasheet：
+
+- `nINTSEL` 外部 strap 为 Low，符合 REF_CLK Out Mode；
+- `REGOFF` 外部 strap 为 Low，符合内部 1.2 V regulator 启用模式。
+
+其中 PHY Address、MODE 和 PHY ID 已通过 MDIO 上板实测确认；`nINTSEL` / `REGOFF` 当前由原理图连接和 Datasheet 支持，尚未通过独立电气测量确认。
 
 ## 7. 物理网络接口
 
@@ -196,17 +207,23 @@ M0 已确认：
 - [x] 基础串口输出链路可工作；
 - [x] 记录当前 PCB UART 丝印与原理图标识冲突。
 
-M1 前后应实际确认：
+M1 已确认：
 
-- [ ] PC0 可正确控制 LAN8720AI nRST；
-- [ ] 25 MHz PHY 晶振正常；
-- [ ] PA1 可观察到正确 RMII REF_CLK；
-- [ ] MDIO 可以读 PHY ID；
-- [ ] PHY Address 与 strap 一致；
-- [ ] MODE strap 与读取寄存器一致；
-- [ ] Link LED 行为正常；
-- [ ] 插拔网线可以反映到 PHY Link 状态；
-- [ ] Speed / Duplex 可以正确读取。
+- [x] PC0 可正确控制 LAN8720AI nRST；
+- [x] MDIO 可以读 PHY ID；
+- [x] MDIO Write 可用；
+- [x] PHY Address 与 strap 一致；
+- [x] MODE strap 与读取寄存器一致；
+- [x] 插拔网线可以反映到 PHY Link 状态；
+- [x] 100 Mbit/s / Full Duplex 状态可以正确读取。
+
+仍待独立或补充验证：
+
+- [ ] 25 MHz PHY 晶振独立测量；
+- [ ] PA1 / RMII_REF_CLK 独立测量；
+- [ ] Link / Speed LED 行为专项验证；
+- [ ] 10 Mbit/s 实际链路；
+- [ ] Half Duplex 实际链路。
 
 ## 11. 资料基线
 
@@ -216,5 +233,6 @@ M1 前后应实际确认：
 - STM32H743 Datasheet
 - LAN8720A/LAN8720Ai Datasheet
 - 当前有效 STM32H743VIT6 开发板原理图
+- 当前仓库 STM32H7 HAL 1.11.6 Ethernet 源码
 
-如后续加入 STM32H743 Reference Manual、当前 STM32CubeH7 HAL 源码或官方 Ethernet/LwIP 示例，应在这里补充版本信息。
+如后续加入 STM32H743 Reference Manual 或官方 Ethernet/LwIP 示例，应在这里补充版本信息。

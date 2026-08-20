@@ -1,66 +1,116 @@
 # Latest Handoff
 
-- 来源工作单元：M0 工程基线与目录搭建
+- 来源工作单元：M1 PHY Bring-up
 - 日期：2026-08-20
-- 当前阶段：M0 收尾完成，下一阶段为 M1 PHY Bring-up
+- 当前阶段：M1 核心功能完成，下一工作单元为 M2 MAC / DMA
 
 ## 1. 本次完成内容
 
-M0 已建立并上板验证最小工程运行基线：
+M1 已完成 LAN8720AI PHY 基础 Bring-up：
 
-- STM32H743VIT6 CubeMX 基础工程；
-- FreeRTOS / CMSIS-RTOS v2；
-- HAL Timebase = TIM6；
-- `BootstrapTask`；
-- LED1 周期心跳；
-- USART1 基础调试输出；
-- `printf -> _write() -> HAL_UART_Transmit() -> USART1`；
-- Ubuntu `/dev/ttyACM0` 串口接收；
-- CubeMX 生成代码与手工维护代码边界；
-- BSP 调试输出文件；
-- 项目状态文档纳入版本控制。
+- PHY Reset；
+- HAL ETH MDIO/MDC Management 访问；
+- MDIO Read / Write；
+- PHY ID；
+- PHY Address；
+- Strap MODE；
+- Auto-negotiation；
+- Link；
+- Speed；
+- Duplex；
+- Link Up / Down 动态检测。
 
-当前工程使用：
+实测：
 
 ```text
-CubeMX          : 6.18.1
-STM32CubeH7     : V1.13.0
-HAL component   : 当前仓库源码为 H7 HAL 1.11.6
-RTOS            : FreeRTOS / CMSIS-RTOS v2
-HAL Timebase    : TIM6
-Debug UART      : USART1, PA9 TX / PA10 RX, 115200 8N1
+PHY ID1     = 0x0007
+PHY ID2     = 0xC0F1
+Reg18       = 0x60E0
+PHY Address = 0
+MODE        = 111
+Link        = Up / Down
+Speed       = 100M
+Duplex      = Full
 ```
+
+网线拔出后可检测 Link Down；重新插入后可恢复 Link Up。
 
 ## 2. 本次修改 / 新增代码
 
-当前与 M0 手工逻辑直接相关的文件：
+M1 相关手工维护文件：
 
 ```text
-BSP/stm32h743vit6_iot/board_debug.c
-Core/Src/freertos.c                  # 仅 USER CODE 区域加入心跳与 printf
-CMakeLists.txt                       # 引入 BSP 调试源文件
+BSP/stm32h743vit6_iot/board_ethernet.c
+BSP/stm32h743vit6_iot/board_ethernet.h
+Drivers/Ethernet/Inc/ethernet_mdio.h
+Drivers/Ethernet/Src/ethernet_mdio.c
+Drivers/Ethernet/Inc/lan8720.h
+Drivers/Ethernet/Src/lan8720.c
+Core/Src/freertos.c                 # 仅 USER CODE 区域加入 Bring-up / Link polling
+CMakeLists.txt                      # 引入 BSP / Ethernet 驱动源文件
 ```
 
-CubeMX 生成或更新：
+CubeMX 生成的 ETH 基础初始化仍由 `.ioc` 与 `Core/Src/eth.c` 等生成文件管理。
+
+## 3. 当前接口与职责边界
+
+### Board Ethernet BSP
 
 ```text
-Core/Inc/FreeRTOSConfig.h
-Core/Inc/usart.h
-Core/Src/freertos.c
-Core/Src/usart.c
-Core/Src/main.c
-Core/Src/stm32h7xx_it.c
-Core/Src/stm32h7xx_hal_timebase_tim.c（若由当前 CubeMX 版本按该形式生成）
-Middlewares/Third_Party/FreeRTOS/**
-cmake/stm32cubemx/CMakeLists.txt
-stm32H7ethernet_demo.ioc
+BoardEthernet_PhyResetAssert()
+BoardEthernet_PhyResetRelease()
 ```
 
-具体生成文件名以后续仓库实际内容为准，不依赖其他 CubeH7 版本示例。
+位置：
 
-## 3. 当前接口与代码位置
+```text
+BSP/stm32h743vit6_iot/board_ethernet.c/.h
+```
 
-### Bootstrap 心跳
+职责仅限当前板级 PHY Reset GPIO 控制。
+
+### MDIO Wrapper
+
+```text
+EthernetMdio_Read()
+EthernetMdio_Write()
+```
+
+位置：
+
+```text
+Drivers/Ethernet/Inc/ethernet_mdio.h
+Drivers/Ethernet/Src/ethernet_mdio.c
+```
+
+职责：封装当前 HAL 1.11.6 的 PHY Management Read / Write，并做基本地址检查。
+
+### LAN8720 PHY Driver
+
+```text
+Lan8720_IsReady()
+Lan8720_RestartAutoNegotiation()
+Lan8720_GetStatus()
+```
+
+位置：
+
+```text
+Drivers/Ethernet/Inc/lan8720.h
+Drivers/Ethernet/Src/lan8720.c
+```
+
+当前 PHY Driver：
+
+- 只通过 `ethernet_mdio` 访问 PHY；
+- 不直接依赖 FreeRTOS；
+- 不依赖 LwIP；
+- `Lan8720_GetStatus()` 返回 Link、Auto-negotiation、Speed、Duplex；
+- BMSR Link Status 按 latch-low 规则连续读取两次；
+- PHY Link Down 后不再要求读取 Reg31 才能返回 Link 状态；
+- 对 `0xFFFF` 无响应值进行过滤，避免误判 Link 状态。
+
+### BootstrapTask
 
 位置：
 
@@ -69,124 +119,120 @@ Core/Src/freertos.c
 StartBootstrapTask()
 ```
 
-当前职责：
+当前仅作为 Bring-up 验证载体，负责：
 
 ```text
-LED1 周期翻转
-+
-低频 printf 启动日志
+等待上电稳定
+→ 释放 PHY Reset
+→ PHY ID polling + timeout
+→ Restart Auto-negotiation
+→ 等待 Link / AN 完成
+→ 打印 Speed / Duplex
+→ 周期轮询 Link 状态
 ```
 
-该任务仅用于 M0 基线验证，不代表未来 Ethernet Task 的最终任务模型、优先级或栈大小。
-
-### Debug UART
-
-硬件初始化由 CubeMX 管理：
-
-```text
-Core/Src/usart.c
-MX_USART1_UART_Init()
-```
-
-手工调试重定向位于：
-
-```text
-BSP/stm32h743vit6_iot/board_debug.c
-_write()
-```
-
-当前调用链：
-
-```text
-printf
-  ↓
-_write
-  ↓
-HAL_UART_Transmit
-  ↓
-USART1
-```
-
-该阻塞调试路径仅允许低频使用，不进入 Ethernet ISR 或高频数据路径。
+当前 Link polling 周期 200 ms 只作为 M1 验证参数，不代表未来网络任务最终周期或架构。
 
 ## 4. 已执行测试与结果
 
-已实际确认：
+### Static Review
 
-- [x] FreeRTOS Scheduler 正常启动；
-- [x] `BootstrapTask` 可持续运行；
-- [x] LED1 心跳正常；
-- [x] USART1 初始化正常；
-- [x] `printf` 重定向链路正常；
-- [x] Ubuntu 端可以接收到周期日志；
-- [x] 当前固件可以编译、烧录并上板运行。
+- [x] BSP / MDIO / PHY 分层符合当前项目架构；
+- [x] PHY Driver 不依赖 FreeRTOS / LwIP；
+- [x] 当前 HAL ETH PHY Management API 已按仓库 HAL 1.11.6 核对；
+- [x] BMSR latch-low 行为按 Datasheet 处理；
+- [x] Reg31 HCDSPEED 映射按 LAN8720 Datasheet 处理。
 
-尚未在本工作单元中形成完整记录：
+### Build Verified
 
-- [ ] Debug / Release 两套 `--fresh` 可重复构建结果。
+- [x] 当前 M1 固件已完成编译、烧录并上板运行。
 
-因此 `05_TEST_PLAN.md` 中“工程可重复编译”仍保留为待补测试项，不把未记录结果写成已完成事实。
+未单独记录 Debug / Release 两套 `--fresh` 可重复构建，因此 `05_TEST_PLAN.md` 中 M0 的“工程可重复编译”仍保留待补。
 
-## 5. 板级实测注意事项
+### On-board Verified
 
-当前验证板实测发现 UART 相关 PCB 丝印与有效原理图的 TX/RX 标识相反。
+- [x] PHY Reset；
+- [x] MDIO Read；
+- [x] MDIO Write；
+- [x] PHY ID；
+- [x] PHY Address = 0；
+- [x] MODE = 111；
+- [x] Auto-negotiation；
+- [x] Link Up；
+- [x] Link Down；
+- [x] 100 Mbit/s；
+- [x] Full Duplex；
+- [x] 单次网线拔出 / 插回恢复。
 
-已验证 MCU 信号定义仍为：
+### Measured
+
+当前没有独立示波器 / 逻辑分析仪测量结果。
+
+尤其不要把以下内容写成 Measured：
 
 ```text
-PA9  = USART1_TX
-PA10 = USART1_RX
+25 MHz PHY crystal
+PA1 / RMII_REF_CLK ≈ 50 MHz
 ```
 
-后续调试接线以实际 MCU 信号和当前有效原理图为准，不依赖该处 PCB 丝印。
+这两项当前由原理图、Datasheet 和功能验证支持，但尚未独立测量。
 
-该结论仅适用于当前验证板。
+## 5. M1 尚未完成的补充测试
 
-## 6. 本次新增 Accepted 设计决定
+以下不阻塞进入 M2，但仍可在后续回归测试中补充：
 
-已在 `06_DECISIONS.md` 新增：
+- [ ] 10 Mbit/s 实际链路；
+- [ ] Half Duplex 实际链路；
+- [ ] 连续多次插拔网线；
+- [ ] 多次 STM32 重启；
+- [ ] 多次 PHY Reset；
+- [ ] 25 MHz 晶振独立测量；
+- [ ] PA1 / RMII_REF_CLK 独立测量；
+- [ ] Link / Speed LED 行为专项验证。
 
-- D011：M0 FreeRTOS 与 HAL 时间基线；
-- D012：M0 基础调试输出；
-- D013：CubeMX 生成代码与手工代码边界。
+## 6. 本次设计决定
 
-仍未冻结：
+`06_DECISIONS.md` 已更新：
 
-- Ethernet Task 优先级；
-- ETH IRQ 优先级；
-- DMA / MPU / Cache 策略；
-- PHY Address / Strap 最终值；
-- LwIP API 和任务模型。
+- D008：PHY Link 检测由 Proposed 转为 Accepted，第一版采用周期轮询；
+- D014：PHY Driver 与 RTOS 边界，Accepted。
+
+D008 不冻结最终 200 ms 周期，也不冻结最终 Link 管理任务位置。
 
 ## 7. 下一工作单元开始时必须读取
 
 1. `00_PROJECT.md`
 2. `01_ARCHITECTURE.md`
 3. `02_HARDWARE_BASELINE.md`
-4. `06_DECISIONS.md`
-5. `07_STATUS.md`
-6. 本文件
-7. LAN8720A/LAN8720AI Datasheet
-8. 当前有效 STM32H743VIT6 原理图
-9. 当前仓库使用的 HAL 源码中与 ETH / PHY Management 相关的实现
+4. `03_MEMORY_DMA.md`
+5. `05_TEST_PLAN.md`
+6. `06_DECISIONS.md`
+7. `07_STATUS.md`
+8. 本文件
+9. 当前 `Core/Src/eth.c` / `Core/Inc/eth.h`
+10. 当前 HAL 1.11.6 Ethernet 源码
+11. `stm32H7ethernet_demo.ioc`
+12. STM32H743 Datasheet / Reference Manual 中 Ethernet DMA、SRAM、Cache / MPU 相关章节
 
 ## 8. 下一工作单元推荐边界
 
-下一工作单元进入 **M1 PHY Bring-up**。
+下一工作单元进入 **M2：STM32H743 MAC / DMA**。
 
-建议按最小可验证顺序推进：
+优先按以下顺序推进：
 
-1. 核对 LAN8720AI strap；
-2. 明确 PHY Reset 时序与 BSP 边界；
-3. 检查当前 HAL 1.11.6 的 ETH / PHY Management API；
-4. 建立最小 MDIO Read / Write；
-5. 读取 PHY ID；
-6. 再处理 Auto-negotiation、Link、Speed、Duplex。
+1. 核对 STM32H743 Ethernet DMA Master 可访问内存；
+2. 读取当前 CubeMX 生成的 Descriptor / Buffer 配置；
+3. 核对当前 HAL 1.11.6 ETH Descriptor / Buffer API；
+4. 冻结第一版 Descriptor / Buffer SRAM 放置方案；
+5. 明确 linker section、实际地址与 map 验证方法；
+6. 确定 MPU / D-Cache 一致性方案；
+7. 建立最小裸 Ethernet Frame TX；
+8. 建立最小裸 Ethernet Frame RX；
+9. 再处理 ETH IRQ 与 FreeRTOS 异步推进。
 
-M1 不进入：
+M2 不进入：
 
-- Ethernet DMA Descriptor / Buffer；
-- MPU / Cache 最终方案；
 - LwIP；
 - Ping；
-- UDP / TCP。
+- UDP / TCP；
+- 机器人 HostLink / 业务协议。

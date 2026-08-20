@@ -157,14 +157,16 @@ HTTP
 
 ## D008 PHY Link 检测
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-08-20
 
-第一版倾向使用周期轮询 PHY Link。
+第一版采用周期轮询 PHY Link。
 
-暂不依赖 PHY nINT。
+暂不依赖 LAN8720 nINT。
 
-具体周期在 M1/M3 结合任务结构确定。
+M1 Bring-up 中使用 200 ms polling 进行上板验证，但该周期以及最终承载 Link 管理的任务不作为长期固定参数。
+
+进入 LwIP / `ethernetif` 后，应结合实际网络任务模型重新确定轮询位置和周期。
 
 ---
 
@@ -276,3 +278,26 @@ docs/stm32h7_ethernet_project_docs/**
 ```
 
 不为了占位而提前创建 M1/M2/M3 的空源文件；实际进入对应模块时再建立文件和接口。
+
+---
+
+## D014 PHY Driver 与 RTOS 边界
+
+- 状态：Accepted
+- 日期：2026-08-20
+
+LAN8720 PHY Driver 保持与 FreeRTOS 解耦。
+
+PHY Driver 提供非阻塞的状态与控制接口：
+
+```text
+Lan8720_IsReady()
+Lan8720_RestartAutoNegotiation()
+Lan8720_GetStatus()
+```
+
+Reset 后的等待、轮询周期和 timeout 由调用层负责。
+
+PHY ready 不依赖固定延时判断，而通过 PHY ID polling + timeout 确认。
+
+对 MDIO 返回的 `0xFFFF` 不作为有效 PHY 状态解释，避免将 PHY 无响应错误判断为有效 Link 状态。
