@@ -2,8 +2,6 @@
 
 基于 STM32H743VIT6 的 Ethernet 基础工程，以 LAN8720AI 为首个验证 PHY，逐步完成 RMII、STM32H7 Ethernet MAC/DMA、FreeRTOS 和 LwIP 的完整通信链路。
 
-> M0 工程运行基线已完成并上板验证：FreeRTOS Scheduler、BootstrapTask、LED 心跳和 USART1 调试输出均可正常工作。当前可进入 M1 PHY Bring-up。详细进度请查看 [`docs/stm32h7_ethernet_project_docs/07_STATUS.md`](docs/stm32h7_ethernet_project_docs/07_STATUS.md)。
-
 ## 硬件与软件基线
 
 | 项目 | 当前配置 |
