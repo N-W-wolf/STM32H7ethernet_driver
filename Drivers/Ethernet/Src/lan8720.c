@@ -23,6 +23,41 @@
 #define LAN8720_HCDSPEED_10M_FULL              0x05U
 #define LAN8720_HCDSPEED_100M_FULL             0x06U
 
+#define LAN8720_REG_PHY_ID1                    2U
+#define LAN8720_REG_PHY_ID2                    3U
+
+#define LAN8720_PHY_ID1_VALUE                  0x0007U
+#define LAN8720_PHY_ID2_MASK                   0xFFF0U
+#define LAN8720_PHY_ID2_VALUE                  0xC0F0U
+
+#define LAN8720_INVALID_REGISTER_VALUE         0xFFFFU
+
+/**
+ * @brief  检查指定地址上的 LAN8720 是否已经能够正常响应 MDIO。
+ *
+ * @param[in] phy_address PHY 地址，范围为 0~31。
+ *
+ * @retval true   PHY ID 与 LAN8720 匹配。
+ * @retval false  MDIO 访问失败或 PHY ID 不匹配。
+ */
+bool Lan8720_IsReady(uint32_t phy_address)
+{
+    uint32_t id1 = 0U;
+    uint32_t id2 = 0U;
+
+    if (!EthernetMdio_Read(phy_address, LAN8720_REG_PHY_ID1, &id1))
+    {
+        return false;
+    }
+
+    if (!EthernetMdio_Read(phy_address, LAN8720_REG_PHY_ID2, &id2))
+    {
+        return false;
+    }
+
+    return (id1 == LAN8720_PHY_ID1_VALUE) && ((id2 & LAN8720_PHY_ID2_MASK) == LAN8720_PHY_ID2_VALUE);
+}
+
 /**
  * @brief  重新启动 PHY 自动协商。
  *
@@ -36,6 +71,11 @@ bool Lan8720_RestartAutoNegotiation(uint32_t phy_address)
     uint32_t bmcr = 0U;
 
     if (!EthernetMdio_Read(phy_address, LAN8720_REG_BMCR, &bmcr))
+    {
+        return false;
+    }
+
+    if (bmcr == LAN8720_INVALID_REGISTER_VALUE)
     {
         return false;
     }
@@ -83,10 +123,20 @@ bool Lan8720_GetStatus(uint32_t phy_address, Lan8720Status *status)
         return false;
     }
 
+    if (bmsr == LAN8720_INVALID_REGISTER_VALUE)
+    {
+        return false;
+    }
+
     status->link_up = (bmsr & LAN8720_BMSR_LINK_STATUS) != 0U;
     status->auto_negotiation_complete = (bmsr & LAN8720_BMSR_AUTO_NEGOTIATION_COMPLETE) != 0U;
 
     if (!EthernetMdio_Read(phy_address, LAN8720_REG_PHY_SPECIAL_CONTROL, &phy_status))
+    {
+        return false;
+    }
+
+    if (phy_status == LAN8720_INVALID_REGISTER_VALUE)
     {
         return false;
     }

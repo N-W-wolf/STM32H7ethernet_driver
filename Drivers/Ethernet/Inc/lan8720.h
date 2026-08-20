@@ -30,6 +30,7 @@ typedef struct
     Lan8720Duplex duplex;
 } Lan8720Status;
 
+bool Lan8720_IsReady(uint32_t phy_address);
 bool Lan8720_RestartAutoNegotiation(uint32_t phy_address);
 bool Lan8720_GetStatus(uint32_t phy_address, Lan8720Status *status);
 

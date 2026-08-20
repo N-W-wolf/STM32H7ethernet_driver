@@ -25,8 +25,8 @@ static bool EthernetMdio_IsAddressValid(uint32_t phy_address, uint32_t register_
 /**
  * @brief  读取 PHY Clause 22 寄存器。
  *
- * @param[in]  phy_address       PHY 地址，范围为 0~31。
- * @param[in]  register_address  PHY 寄存器地址，范围为 0~31。
+ * @param[in]  phy_address       PHY 地址，范围为 0-31。
+ * @param[in]  register_address  PHY 寄存器地址，范围为 0-31。
  * @param[out] value             读取结果输出指针。
  *
  * @retval true   读取成功。

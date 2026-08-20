@@ -40,8 +40,11 @@
 /* USER CODE BEGIN PD */
 #define LAN8720_PHY_ADDRESS                 0U
 
-#define M1_AUTO_NEGOTIATION_TIMEOUT_MS      5000U
-#define M1_AUTO_NEGOTIATION_POLL_PERIOD_MS  100U
+#define PHY_READY_TIMEOUT_MS             100U
+#define PHY_READY_POLL_PERIOD_MS         5U
+
+#define AUTO_NEGOTIATION_TIMEOUT_MS      5000U
+#define AUTO_NEGOTIATION_POLL_PERIOD_MS  100U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -121,74 +124,89 @@ void StartBootstrapTask(void *argument)
 {
   /* USER CODE BEGIN StartBootstrapTask */
   Lan8720Status phy_status = {0};
+  bool phy_ready = false;
   uint32_t elapsed_ms = 0U;
 
   printf("[M1] BootstrapTask started\r\n");
 
   // MX_GPIO_Init() 已经将 PHY nRST 拉低。等待上电稳定后释放 PHY 硬件复位。
   osDelay(25U);
-
   BoardEthernet_PhyResetRelease();
-  osDelay(10U);
 
-  if (!Lan8720_RestartAutoNegotiation(LAN8720_PHY_ADDRESS))
+  while (elapsed_ms < PHY_READY_TIMEOUT_MS)
   {
-    printf("[M1] Auto-negotiation restart failed\r\n");
+    if (Lan8720_IsReady(LAN8720_PHY_ADDRESS))
+    {
+      phy_ready = true;
+      break;
+    }
+
+    osDelay(PHY_READY_POLL_PERIOD_MS);
+    elapsed_ms += PHY_READY_POLL_PERIOD_MS;
+  }
+
+  if (!phy_ready)
+  {
+    printf("[M1] PHY ready timeout\r\n");
   }
   else
   {
-    printf("[M1] Auto-negotiation started\r\n");
-    while (elapsed_ms < M1_AUTO_NEGOTIATION_TIMEOUT_MS)
+    printf("[M1] PHY ready\r\n");
+
+    if (!Lan8720_RestartAutoNegotiation(LAN8720_PHY_ADDRESS))
     {
-      if (!Lan8720_GetStatus(LAN8720_PHY_ADDRESS, &phy_status))
+      printf("[M1] Auto-negotiation restart failed\r\n");
+    }
+    else
+    {
+       printf("[M1] Auto-negotiation started\r\n");
+
+      elapsed_ms = 0U;
+
+      while (elapsed_ms < AUTO_NEGOTIATION_TIMEOUT_MS)
       {
-        printf("[M1] PHY status read failed\r\n");
-        break;
+        if (!Lan8720_GetStatus(LAN8720_PHY_ADDRESS, &phy_status))
+        {
+          printf("[M1] PHY status read failed\r\n");
+          break;
+        }
+
+        if (phy_status.auto_negotiation_complete && phy_status.link_up)
+        {
+          break;
+        }
+
+        osDelay(AUTO_NEGOTIATION_POLL_PERIOD_MS);
+        elapsed_ms += AUTO_NEGOTIATION_POLL_PERIOD_MS;
       }
 
       if (phy_status.auto_negotiation_complete && phy_status.link_up)
       {
-        break;
+        printf("[M1] Link up\r\n");
+
+        if (phy_status.speed == LAN8720_SPEED_100M)
+        {
+          printf("[M1] Speed=100M\r\n");
+        }
+        else if (phy_status.speed == LAN8720_SPEED_10M)
+        {
+          printf("[M1] Speed=10M\r\n");
+        }
+
+        if (phy_status.duplex == LAN8720_DUPLEX_FULL)
+        {
+          printf("[M1] Duplex=Full\r\n");
+        }
+        else if (phy_status.duplex == LAN8720_DUPLEX_HALF)
+        {
+          printf("[M1] Duplex=Half\r\n");
+        }
       }
-
-      osDelay(M1_AUTO_NEGOTIATION_POLL_PERIOD_MS);
-      elapsed_ms += M1_AUTO_NEGOTIATION_POLL_PERIOD_MS;
-    }
-
-    if (phy_status.auto_negotiation_complete && phy_status.link_up)
-    {
-      printf("[M1] Link up\r\n");
-
-      uint32_t phy_special_status = 0U;
-
-      if (EthernetMdio_Read(LAN8720_PHY_ADDRESS, 31U, &phy_special_status))
+      else
       {
-        printf("[M1] Reg31=0x%04lX HCDSPEED=0x%lX\r\n", (unsigned long)phy_special_status, (unsigned long)((phy_special_status >> 2U) & 0x07U));
-      }
-
-      if (phy_status.speed == LAN8720_SPEED_100M)
-      {
-        printf("[M1] Speed=100M\r\n");
-      }
-      else if (phy_status.speed == LAN8720_SPEED_10M)
-      {
-        printf("[M1] Speed=10M\r\n");
-      }
-
-      if (phy_status.duplex == LAN8720_DUPLEX_FULL)
-      {
-        printf("[M1] Duplex=Full\r\n");
-      }
-      else if (phy_status.duplex == LAN8720_DUPLEX_HALF)
-      {
-        printf("[M1] Duplex=Half\r\n");
+        printf("[M1] Auto-negotiation timeout or link down\r\n");
       }
     }
-    else
-    {
-      printf("[M1] Auto-negotiation timeout or link down\r\n");
-    }
-
   }
 
   /* Infinite loop */
