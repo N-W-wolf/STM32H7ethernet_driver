@@ -1,17 +1,28 @@
 # Test Plan
 
-- 状态：Skeleton
-- 说明：本文件先定义各里程碑的验收边界；具体命令、脚本、频率和时长在对应阶段补充。
+- 状态：Active
+- 说明：本文件定义各里程碑的验收边界；具体命令、脚本、频率和时长在对应阶段补充。
 
 ## M0：项目基线
 
 通过条件：
 
 - [ ] 工程可重复编译；
-- [ ] FreeRTOS 最小任务正常；
-- [ ] 基本调试输出正常；
-- [ ] CubeMX 生成代码和自定义代码边界明确；
-- [ ] 项目目录与架构文档一致。
+- [x] FreeRTOS 最小任务正常；
+- [x] 基本调试输出正常；
+- [x] CubeMX 生成代码和自定义代码边界明确；
+- [x] 项目目录与架构文档一致。
+
+当前实际验证结果：
+
+- `BootstrapTask` 可以持续运行；
+- LED1 周期心跳正常；
+- `printf -> _write() -> HAL_UART_Transmit() -> USART1` 链路正常；
+- Linux 端可通过 `/dev/ttyACM0` 接收调试日志；
+- USART1 使用 PA9 TX / PA10 RX，115200 8N1；
+- 调试中发现当前 PCB UART 丝印与有效原理图 TX/RX 标识相反，已记录到 `02_HARDWARE_BASELINE.md`。
+
+说明：本工作单元已经完成一次可编译、可烧录、可运行的 M0 固件验证；`工程可重复编译` 项保留未勾选，待后续明确执行并记录 Debug / Release fresh build 后再关闭。
 
 ## M1：PHY Bring-up
 
