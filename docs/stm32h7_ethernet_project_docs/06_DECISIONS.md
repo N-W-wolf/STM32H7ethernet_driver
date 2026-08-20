@@ -201,3 +201,78 @@ HTTP
 - 对应专题文档。
 
 每个新对话只承担一个经过当前对话确认的工作范围。
+
+---
+
+## D011 M0 FreeRTOS 与 HAL 时间基线
+
+- 状态：Accepted
+- 日期：2026-08-20
+
+M0 工程使用 FreeRTOS，并由 CubeMX 以 CMSIS-RTOS v2 接口生成基础任务框架。
+
+时间基线采用：
+
+```text
+TIM6    → HAL 1 ms Tick / HAL timeout
+SysTick → FreeRTOS Kernel Tick
+```
+
+后续 Ethernet ISR 如需调用 FreeRTOS FromISR API，必须基于实际 `FreeRTOSConfig.h` 和 NVIC 配置重新核对中断优先级约束。
+
+本决定不冻结未来 Ethernet Task、`tcpip_thread` 或 ETH IRQ 的优先级。
+
+---
+
+## D012 M0 基础调试输出
+
+- 状态：Accepted
+- 日期：2026-08-20
+
+第一验证板的 M0 基础调试输出使用：
+
+```text
+USART1
+PA9  = TX
+PA10 = RX
+115200 / 8N1
+```
+
+`printf` 通过 BSP 中的强符号 `_write()` 重定向到 `HAL_UART_Transmit()`。
+
+该路径仅用于低频启动、Bring-up 和诊断信息；禁止在 Ethernet IRQ、高频 RX/TX 快路径中直接 `printf`。
+
+UART 阻塞发送必须带 timeout。
+
+---
+
+## D013 CubeMX 生成代码与手工代码边界
+
+- 状态：Accepted
+- 日期：2026-08-20
+
+以下内容按 CubeMX / ST 生成或维护：
+
+```text
+stm32H7ethernet_demo.ioc
+Core/**
+Drivers/CMSIS/**
+Drivers/STM32H7xx_HAL_Driver/**
+cmake/stm32cubemx/CMakeLists.txt
+CubeMX 生成的 Third_Party middleware
+```
+
+对 `Core/**` 的长期手工修改只放在 CubeMX `USER CODE BEGIN/END` 区域内，除非后续明确决定接管某个文件。
+
+以下目录用于项目长期手工维护：
+
+```text
+BSP/**
+Drivers/Ethernet/**
+Middlewares/Network/**
+App/**
+docs/stm32h7_ethernet_project_docs/**
+顶层 CMakeLists.txt 与项目脚本
+```
+
+不为了占位而提前创建 M1/M2/M3 的空源文件；实际进入对应模块时再建立文件和接口。
