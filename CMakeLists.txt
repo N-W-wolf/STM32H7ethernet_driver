@@ -48,7 +48,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ./BSP/stm32h743vit6_iot/board_debug.c
     ./BSP/stm32h743vit6_iot/board_ethernet.c
     ./Drivers/Ethernet/Src/ethernet_mdio.c
-    ./Drivers/Ethernet/Src/lan8720.c
+    ./Drivers/Ethernet/PHY/Src/lan8720.c
 )
 
 # Add include paths
@@ -56,6 +56,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     ./BSP/stm32h743vit6_iot
     ./Drivers/Ethernet/Inc
+    ./Drivers/Ethernet/PHY/Inc
 )
 
 # Add project symbols (macros)
