@@ -27,6 +27,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include "board_ethernet.h"
 #include "lan8720.h"
 /* USER CODE END Includes */
 
@@ -119,10 +120,16 @@ void MX_FREERTOS_Init(void) {
 void StartBootstrapTask(void *argument)
 {
   /* USER CODE BEGIN StartBootstrapTask */
-  printf("[M1] BootstrapTask started\r\n");
-
   Lan8720Status phy_status = {0};
   uint32_t elapsed_ms = 0U;
+
+  printf("[M1] BootstrapTask started\r\n");
+
+  // MX_GPIO_Init() 已经将 PHY nRST 拉低。等待上电稳定后释放 PHY 硬件复位。
+  osDelay(25U);
+
+  BoardEthernet_PhyResetRelease();
+  osDelay(10U);
 
   if (!Lan8720_RestartAutoNegotiation(LAN8720_PHY_ADDRESS))
   {
@@ -151,6 +158,13 @@ void StartBootstrapTask(void *argument)
     if (phy_status.auto_negotiation_complete && phy_status.link_up)
     {
       printf("[M1] Link up\r\n");
+
+      uint32_t phy_special_status = 0U;
+
+      if (EthernetMdio_Read(LAN8720_PHY_ADDRESS, 31U, &phy_special_status))
+      {
+        printf("[M1] Reg31=0x%04lX HCDSPEED=0x%lX\r\n", (unsigned long)phy_special_status, (unsigned long)((phy_special_status >> 2U) & 0x07U));
+      }
 
       if (phy_status.speed == LAN8720_SPEED_100M)
       {

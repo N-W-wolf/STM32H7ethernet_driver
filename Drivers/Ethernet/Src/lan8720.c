@@ -71,10 +71,8 @@ bool Lan8720_GetStatus(uint32_t phy_address, Lan8720Status *status)
     status->speed = LAN8720_SPEED_UNKNOWN;
     status->duplex = LAN8720_DUPLEX_UNKNOWN;
 
-    /*
-     * BMSR Link Status 为 latch-low。
-     * 第一次读取清除历史 latch，第二次读取用于获取当前状态。
-     */
+    // BMSR Link Status 为 latch-low。
+    // 第一次读取清除历史 latch，第二次读取用于获取当前状态。
     if (!EthernetMdio_Read(phy_address, LAN8720_REG_BMSR, &bmsr))
     {
         return false;
