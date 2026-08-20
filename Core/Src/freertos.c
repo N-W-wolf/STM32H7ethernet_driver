@@ -27,6 +27,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include "board_ethernet.h"
+#include "ethernet_mdio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -36,7 +38,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define LAN8720_PHY_ADDRESS       0U
+#define LAN8720_REG_ID1           2U
+#define LAN8720_REG_ID2           3U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -118,11 +122,28 @@ void StartBootstrapTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-
-    printf("[M0] BootstrapTask alive\r\n");
     
-    osDelay(1000);
+    osDelay(1);
+  }
+  uint32_t phy_id1 = 0U;
+  uint32_t phy_id2 = 0U;
+
+  osDelay(25U);
+
+  BoardEthernet_PhyResetAssert();
+  osDelay(1U);
+
+  BoardEthernet_PhyResetRelease();
+  osDelay(10U);
+
+  if (EthernetMdio_Read(LAN8720_PHY_ADDRESS, LAN8720_REG_ID1, &phy_id1) && 
+      EthernetMdio_Read(LAN8720_PHY_ADDRESS, LAN8720_REG_ID2, &phy_id2))
+  {
+      printf("[M1] PHY ID1=0x%04lX ID2=0x%04lX\r\n", (unsigned long)phy_id1, (unsigned long)phy_id2);
+  }
+  else
+  {
+      printf("[M1] PHY ID read failed\r\n");
   }
   /* USER CODE END StartBootstrapTask */
 }
