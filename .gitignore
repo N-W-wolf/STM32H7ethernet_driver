@@ -52,7 +52,6 @@ build.ninja
 # Local documentation copies (keep Markdown project documentation)
 /docs/datasheet/
 /docs/原理图/
-/docs/stm32h7_ethernet_project_docs
 
 # OS, logs, temporary and backup files
 .DS_Store
