@@ -146,7 +146,36 @@ Transformer
 RJ45
 ```
 
-## 8. 内存 / DMA
+## 8. M0 调试串口
+
+当前工程使用 USART1 作为基础调试输出：
+
+```text
+PA9  = USART1_TX
+PA10 = USART1_RX
+115200 baud
+8 data bits
+No parity
+1 stop bit
+No hardware flow control
+```
+
+该配置已完成上板验证，Linux 端可通过对应 USB 虚拟串口接收日志。
+
+### PCB 丝印注意事项
+
+M0 实测发现：当前板卡 UART 相关 PCB 丝印与有效原理图中的 TX/RX 标识相反。
+
+已验证的软件信号定义仍为：
+
+```text
+PA9  = USART1_TX
+PA10 = USART1_RX
+```
+
+因此调试接线时应以 MCU 实际信号和当前有效原理图为依据，不依赖该处 PCB 丝印。该结论仅针对当前验证板，不外推到其他板卡。
+
+## 9. 内存 / DMA
 
 当前尚未冻结 Ethernet DMA 内存布局。
 
@@ -159,7 +188,13 @@ RJ45
 
 最终 SRAM 区域、MPU 属性、Descriptor 地址和 Buffer 地址统一在 `03_MEMORY_DMA.md` 中确定。
 
-## 9. 当前硬件验证清单
+## 10. 当前硬件验证清单
+
+M0 已确认：
+
+- [x] USART1 PA9 TX / PA10 RX 配置可工作；
+- [x] 基础串口输出链路可工作；
+- [x] 记录当前 PCB UART 丝印与原理图标识冲突。
 
 M1 前后应实际确认：
 
@@ -173,7 +208,7 @@ M1 前后应实际确认：
 - [ ] 插拔网线可以反映到 PHY Link 状态；
 - [ ] Speed / Duplex 可以正确读取。
 
-## 10. 资料基线
+## 11. 资料基线
 
 当前主要资料：
 
