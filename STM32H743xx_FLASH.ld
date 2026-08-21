@@ -275,6 +275,34 @@ SECTIONS
   ASSERT(SIZEOF(.TxDescripSection) > 0,
          "Ethernet TX descriptor section is empty")
 
+  /* Ethernet DMA RX buffers */
+  .eth_dma_rx 0x30042000 (NOLOAD) :
+  {
+    . = ALIGN(32);
+    KEEP(*(.eth_dma_buffer.rx))
+    . = ALIGN(32);
+  } >RAM_ETH
+  
+  /* Ethernet DMA TX buffers */
+  .eth_dma_tx 0x30044000 (NOLOAD) :
+  {
+    . = ALIGN(32);
+    KEEP(*(.eth_dma_buffer.tx))
+    . = ALIGN(32);
+  } >RAM_ETH
+
+  ASSERT(ADDR(.eth_dma_rx) == 0x30042000,
+         "Ethernet RX buffer address mismatch")
+
+  ASSERT(SIZEOF(.eth_dma_rx) == 0x1800,
+         "Ethernet RX buffer pool size mismatch")
+
+  ASSERT(ADDR(.eth_dma_tx) == 0x30044000,
+         "Ethernet TX buffer address mismatch")
+
+  ASSERT(SIZEOF(.eth_dma_tx) == 0x1800,
+         "Ethernet TX buffer pool size mismatch")
+
   /* Remove information from the standard libraries */
   /DISCARD/ :
   {

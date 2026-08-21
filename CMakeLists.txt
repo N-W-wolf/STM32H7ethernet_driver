@@ -48,6 +48,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ./BSP/stm32h743vit6_iot/board_debug.c
     ./BSP/stm32h743vit6_iot/board_ethernet.c
     ./Drivers/Ethernet/Src/ethernet_mdio.c
+    ./Drivers/Ethernet/Src/ethernet_driver.c
     ./Drivers/Ethernet/PHY/Src/lan8720.c
 )
 

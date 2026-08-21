@@ -1,0 +1,403 @@
+#include "ethernet_driver.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "stm32h7xx_hal.h"
+#include "eth.h"
+
+#define ETHERNET_DMA_BUFFER_SIZE  1536U
+#define ETHERNET_DMA_ALIGNMENT    32U
+
+/**
+ * @brief CPU 侧单帧接收暂存区。
+ *
+ * DMA RX Buffer 中的数据在 HAL_ETH_RxLinkCallback() 中复制到这里，
+ * 因此上层不会持有 DMA Buffer。
+ */
+typedef struct
+{
+    uint32_t length;
+    bool valid;
+    uint8_t data[ETHERNET_DMA_BUFFER_SIZE];
+} EthernetRxFrameStorage;
+
+static uint8_t g_rx_dma_buffers[ETH_RX_DESC_CNT][ETHERNET_DMA_BUFFER_SIZE]
+    __attribute__((section(".eth_dma_buffer.rx"), 
+                   aligned(ETHERNET_DMA_ALIGNMENT),
+                   used));
+
+static uint8_t g_tx_dma_buffers[ETH_TX_DESC_CNT][ETHERNET_DMA_BUFFER_SIZE]
+    __attribute__((section(".eth_dma_buffer.tx"), 
+                   aligned(ETHERNET_DMA_ALIGNMENT),
+                   used));
+
+static bool g_rx_buffer_in_use[ETH_RX_DESC_CNT];
+static bool g_tx_buffer_in_use[ETH_TX_DESC_CNT];
+
+static EthernetRxFrameStorage g_rx_frame;
+
+_Static_assert((ETHERNET_DMA_BUFFER_SIZE % ETHERNET_DMA_ALIGNMENT) == 0U,
+               "Ethernet DMA buffer size must be cache-line aligned");
+
+/**
+ * @brief  释放一个 RX DMA Buffer。
+ *
+ * @param[in] buffer RX DMA Buffer 首地址。
+ *
+ * @retval true   Buffer 属于 RX Pool，已释放。
+ * @retval false  Buffer 不属于 RX Pool。
+ */
+static bool EthernetDriver_ReleaseRxBuffer(uint8_t *buffer)
+{
+    for (uint32_t i = 0U; i < ETH_RX_DESC_CNT; i++)
+    {
+        if (buffer == g_rx_dma_buffers[i])
+        {
+            g_rx_buffer_in_use[i] = false;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * @brief  获取一个空闲 TX DMA Buffer。
+ *
+ * @retval 非 NULL  空闲 TX Buffer 地址。
+ * @retval NULL      当前没有可用 TX Buffer。
+ */
+static uint8_t *EthernetDriver_AcquireTxBuffer(void)
+{
+    for (uint32_t i = 0U; i < ETH_TX_DESC_CNT; i++)
+    {
+        if (!g_tx_buffer_in_use[i])
+        {
+            g_tx_buffer_in_use[i] = true;
+            return g_tx_dma_buffers[i];
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * @brief  释放一个 TX DMA Buffer。
+ *
+ * @param[in] buffer TX DMA Buffer 地址。
+ */
+static void EthernetDriver_ReleaseTxBuffer(uint8_t *buffer)
+{
+    for (uint32_t i = 0U; i < ETH_TX_DESC_CNT; i++)
+    {
+        if (buffer == g_tx_dma_buffers[i])
+        {
+            g_tx_buffer_in_use[i] = false;
+            return;
+        }
+    }
+}
+
+/**
+ * @brief  将一个 RX DMA Buffer 片段复制到 CPU 侧帧暂存区。
+ *
+ * @param[in] buffer RX 数据地址。
+ * @param[in] length 数据长度。
+ *
+ * @retval true   数据复制成功。
+ * @retval false  参数无效或帧长度超过暂存区容量。
+ */
+static bool EthernetDriver_AppendRxData(const uint8_t *buffer, uint16_t length)
+{
+    if (buffer == NULL)
+    {
+        return false;
+    }
+
+    if ((g_rx_frame.length + length) > sizeof(g_rx_frame.data))
+    {
+        return false;
+    }
+
+    memcpy(&g_rx_frame.data[g_rx_frame.length], buffer, length);
+    g_rx_frame.length += length;
+
+    return true;
+}
+
+/**
+ * @brief  初始化 Ethernet Driver 的软件 Buffer ownership 状态。
+ *
+ * @details
+ * 不初始化 DMA 硬件，只清理 RX/TX Buffer Pool 的软件状态。
+ * 必须在 Ethernet MAC/DMA Start 前调用。
+ */
+void EthernetDriver_Init(void)
+{
+    memset(g_rx_buffer_in_use, 0, sizeof(g_rx_buffer_in_use));
+    memset(g_tx_buffer_in_use, 0, sizeof(g_tx_buffer_in_use));
+
+    g_rx_frame.length = 0U;
+    g_rx_frame.valid = false;
+}
+
+/**
+ * @brief  根据 PHY 协商结果配置 Ethernet MAC。
+ *
+ * @param[in] speed   链路速率。
+ * @param[in] duplex  双工模式。
+ *
+ * @retval true   MAC 配置成功。
+ * @retval false  参数或 HAL 状态无效。
+ */
+bool EthernetDriver_ConfigureLink(EthernetLinkSpeed speed, EthernetDuplexMode duplex)
+{
+    ETH_MACConfigTypeDef mac_config = {0};
+
+    if (heth.gState != HAL_ETH_STATE_READY)
+    {
+        return false;
+    }
+
+    if (HAL_ETH_GetMACConfig(&heth, &mac_config) != HAL_OK)
+    {
+        return false;
+    }
+
+    switch (speed)
+    {
+        case ETHERNET_LINK_SPEED_10M:
+            mac_config.Speed = ETH_SPEED_10M;
+            break;
+
+        case ETHERNET_LINK_SPEED_100M:
+            mac_config.Speed = ETH_SPEED_100M;
+            break;
+
+        default:
+            return false;
+    }
+
+    switch (duplex)
+    {
+        case ETHERNET_DUPLEX_HALF:
+            mac_config.DuplexMode = ETH_HALFDUPLEX_MODE;
+            break;
+
+        case ETHERNET_DUPLEX_FULL:
+            mac_config.DuplexMode = ETH_FULLDUPLEX_MODE;
+            break;
+
+        default:
+            return false;
+    }
+
+    return HAL_ETH_SetMACConfig(&heth, &mac_config) == HAL_OK;
+}
+
+/**
+ * @brief  启动 Ethernet MAC 和 DMA。
+ *
+ * @retval true   启动成功。
+ * @retval false  HAL 状态错误或启动失败。
+ */
+bool EthernetDriver_Start(void)
+{
+    if (heth.gState != HAL_ETH_STATE_READY)
+    {
+        return false;
+    }
+
+    return HAL_ETH_Start(&heth) == HAL_OK;
+}
+
+/**
+ * @brief  以 polling 模式发送一个完整 Ethernet Frame。
+ *
+ * @details
+ * Frame 首先复制到静态 TX DMA Buffer，再交给 HAL_ETH_Transmit()。
+ * 本函数返回后 TX DMA Buffer 立即归还 Driver。
+ *
+ * @param[in] frame       Ethernet Frame，包含目的 MAC、源 MAC、EtherType 和 Payload，
+ *                        不包含 FCS。
+ * @param[in] length      Frame 长度。
+ * @param[in] timeout_ms  HAL polling 发送 timeout。
+ *
+ * @retval true   Frame 已发送完成。
+ * @retval false  参数错误、Driver 未启动、无 TX Buffer 或 HAL 发送失败。
+ */
+bool EthernetDriver_Transmit(const uint8_t *frame, uint16_t length, uint32_t timeout_ms)
+{
+    ETH_BufferTypeDef hal_buffer = {0};
+    ETH_TxPacketConfigTypeDef tx_config = {0};
+    uint8_t *dma_buffer;
+    HAL_StatusTypeDef hal_status;
+
+    if ((frame == NULL) ||
+        (length < 14U) ||
+        (length > ETHERNET_DMA_BUFFER_SIZE) ||
+        (heth.gState != HAL_ETH_STATE_STARTED))
+    {
+        return false;
+    }
+
+    dma_buffer = EthernetDriver_AcquireTxBuffer();
+
+    if (dma_buffer == NULL)
+    {
+        return false;
+    }
+
+    memcpy(dma_buffer, frame, length);
+
+    hal_buffer.buffer = dma_buffer;
+    hal_buffer.len = length;
+    hal_buffer.next = NULL;
+
+    tx_config.Attributes =
+        ETH_TX_PACKETS_FEATURES_CRCPAD |
+        ETH_TX_PACKETS_FEATURES_SAIC;
+
+    tx_config.Length = length;
+    tx_config.TxBuffer = &hal_buffer;
+    tx_config.SrcAddrCtrl = ETH_SRC_ADDR_REPLACE;
+    tx_config.CRCPadCtrl = ETH_CRC_PAD_INSERT;
+    tx_config.pData = dma_buffer;
+
+    hal_status = HAL_ETH_Transmit(&heth, &tx_config, timeout_ms);
+
+    if (hal_status == HAL_OK)
+    {
+        EthernetDriver_ReleaseTxBuffer(dma_buffer);
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * @brief  以 polling 模式读取一个完整 Ethernet Frame。
+ *
+ * @param[out] frame     接收 Frame 的调用者 Buffer。
+ * @param[in]  capacity  调用者 Buffer 容量。
+ * @param[out] length    实际接收 Frame 长度。
+ *
+ * @retval ETHERNET_RX_FRAME  成功读取一个完整 Frame。
+ * @retval ETHERNET_RX_NONE   当前没有完整 Frame。
+ * @retval ETHERNET_RX_ERROR  参数、状态或 RX Frame 无效。
+ */
+EthernetRxResult EthernetDriver_Receive(uint8_t *frame, uint16_t capacity, uint16_t *length)
+{
+    void *app_buffer = NULL;
+    HAL_StatusTypeDef hal_status;
+
+    if ((frame == NULL) ||
+        (length == NULL) ||
+        (capacity == 0U) ||
+        (heth.gState != HAL_ETH_STATE_STARTED))
+    {
+        return ETHERNET_RX_ERROR;
+    }
+
+    *length = 0U;
+
+    hal_status = HAL_ETH_ReadData(&heth, &app_buffer);
+
+    if (hal_status != HAL_OK)
+    {
+        return ETHERNET_RX_NONE;
+    }
+
+    if ((app_buffer != &g_rx_frame) ||
+        !g_rx_frame.valid ||
+        (g_rx_frame.length == 0U) ||
+        (g_rx_frame.length > capacity))
+    {
+        g_rx_frame.length = 0U;
+        g_rx_frame.valid = false;
+        return ETHERNET_RX_ERROR;
+    }
+
+    memcpy(frame, g_rx_frame.data, g_rx_frame.length);
+
+    *length = (uint16_t)g_rx_frame.length;
+
+    g_rx_frame.length = 0U;
+    g_rx_frame.valid = false;
+
+    return ETHERNET_RX_FRAME;
+}
+
+/**
+ * @brief  为 HAL RX Descriptor 提供空闲 DMA Buffer。
+ *
+ * @param[out] buffer 返回 DMA Buffer 地址；没有空闲 Buffer 时返回 NULL。
+ */
+void HAL_ETH_RxAllocateCallback(uint8_t **buffer)
+{
+    if (buffer == NULL)
+    {
+        return;
+    }
+
+    *buffer = NULL;
+
+    for (uint32_t i = 0U; i < ETH_RX_DESC_CNT; i++)
+    {
+        if (!g_rx_buffer_in_use[i])
+        {
+            g_rx_buffer_in_use[i] = true;
+            *buffer = g_rx_dma_buffers[i];
+            return;
+        }
+    }
+}
+
+/**
+ * @brief  将 HAL 收到的 DMA Buffer 数据复制到 CPU 侧 Frame。
+ *
+ * @details
+ * HAL_ETH_ReadData() 每处理一个 RX Descriptor 都会调用本函数。
+ * DMA Buffer 完成复制后立即归还 RX Pool，使 Descriptor 可以重新获取 Buffer。
+ *
+ * @param[in,out] pStart HAL 应用 Packet 起始对象。
+ * @param[in,out] pEnd   HAL 应用 Packet 结束对象。
+ * @param[in]     buffer DMA RX Buffer。
+ * @param[in]     length 当前 Buffer 中的有效数据长度。
+ */
+void HAL_ETH_RxLinkCallback(void **pStart, void **pEnd, uint8_t *buffer, uint16_t length)
+{
+    if ((pStart == NULL) || (pEnd == NULL))
+    {
+        if (buffer != NULL)
+        {
+            (void)EthernetDriver_ReleaseRxBuffer(buffer);
+        }
+
+        return;
+    }
+
+    if (*pStart == NULL)
+    {
+        g_rx_frame.length = 0U;
+        g_rx_frame.valid = true;
+
+        *pStart = &g_rx_frame;
+        *pEnd = &g_rx_frame;
+    }
+
+    if (!EthernetDriver_AppendRxData(buffer, length))
+    {
+        g_rx_frame.valid = false;
+    }
+
+    if ((buffer == NULL) || !EthernetDriver_ReleaseRxBuffer(buffer))
+    {
+        g_rx_frame.valid = false;
+    }
+
+    *pEnd = &g_rx_frame;
+}

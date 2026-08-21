@@ -27,7 +27,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
+
 #include "board_ethernet.h"
+#include "ethernet_driver.h"
 #include "lan8720.h"
 /* USER CODE END Includes */
 
@@ -47,6 +50,9 @@
 #define AUTO_NEGOTIATION_POLL_PERIOD_MS  100U
 
 #define PHY_LINK_POLL_PERIOD_MS  200U
+
+#define RAW_RX_TEST_TIMEOUT_MS      10000U
+#define RAW_RX_TEST_POLL_PERIOD_MS  5U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,7 +62,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-
+static uint8_t g_ethernet_test_rx_frame[ETHERNET_FRAME_BUFFER_SIZE];
+static bool EthernetTest_WaitRawFrames(uint32_t expected_count, uint32_t timeout_ms);
 /* USER CODE END Variables */
 /* Definitions for BootstrapTask */
 osThreadId_t BootstrapTaskHandle;
@@ -68,7 +75,7 @@ const osThreadAttr_t BootstrapTask_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-
+static bool EthernetTest_SendRawFrame(const Lan8720Status *phy_status);
 /* USER CODE END FunctionPrototypes */
 
 void StartBootstrapTask(void *argument);
@@ -153,19 +160,19 @@ void StartBootstrapTask(void *argument)
 
   if (!phy_ready)
   {
-    printf("[M1] PHY ready timeout\r\n");
+    printf("[ETH] PHY ready timeout\r\n");
   }
   else
   {
-    printf("[M1] PHY ready\r\n");
+    printf("[ETH] PHY ready\r\n");
 
     if (!Lan8720_RestartAutoNegotiation(LAN8720_PHY_ADDRESS))
     {
-      printf("[M1] Auto-negotiation restart failed\r\n");
+      printf("[ETH] Auto-negotiation restart failed\r\n");
     }
     else
     {
-      printf("[M1] Auto-negotiation started\r\n");
+      printf("[ETH] Auto-negotiation started\r\n");
 
       elapsed_ms = 0U;
 
@@ -173,7 +180,7 @@ void StartBootstrapTask(void *argument)
       {
         if (!Lan8720_GetStatus(LAN8720_PHY_ADDRESS, &phy_status))
         {
-          printf("[M1] PHY status read failed\r\n");
+          printf("[ETH] PHY status read failed\r\n");
           break;
         }
 
@@ -188,24 +195,44 @@ void StartBootstrapTask(void *argument)
 
       if (phy_status.auto_negotiation_complete && phy_status.link_up)
       {
-        printf("[M1] Link up\r\n");
+        printf("[ETH] Link up\r\n");
 
         if (phy_status.speed == LAN8720_SPEED_100M)
         {
-          printf("[M1] Speed=100M\r\n");
+          printf("[ETH] Speed=100M\r\n");
         }
         else if (phy_status.speed == LAN8720_SPEED_10M)
         {
-          printf("[M1] Speed=10M\r\n");
+          printf("[ETH] Speed=10M\r\n");
         }
 
         if (phy_status.duplex == LAN8720_DUPLEX_FULL)
         {
-          printf("[M1] Duplex=Full\r\n");
+          printf("[ETH] Duplex=Full\r\n");
         }
         else if (phy_status.duplex == LAN8720_DUPLEX_HALF)
         {
-          printf("[M1] Duplex=Half\r\n");
+          printf("[ETH] Duplex=Half\r\n");
+        }
+
+        if (EthernetTest_SendRawFrame(&phy_status))
+        {
+            printf("[ETH] Raw frame TX OK\r\n");
+
+            printf("[ETH] Waiting for raw RX test frame...\r\n");
+
+            if (EthernetTest_WaitRawFrames(1000U, 15000U))
+            {
+              printf("[ETH] Continuous raw RX OK\r\n");
+            }
+            else
+            {
+              printf("[ETH] Continuous raw RX failed\r\n");
+            }
+        }
+        else
+        {
+          printf("[ETH] Raw frame TX failed\r\n");
         }
 
         last_phy_status = phy_status;
@@ -266,7 +293,171 @@ void StartBootstrapTask(void *argument)
 }
 
 /* Private application code --------------------------------------------------*/
+
 /* USER CODE BEGIN Application */
+/**
+ * @brief  根据 PHY 协商结果启动 MAC/DMA，并发送一帧测试 Ethernet Frame。
+ *
+ * @param[in] phy_status PHY 当前链路状态。
+ *
+ * @retval true   MAC 配置、启动和 Frame 发送均成功。
+ * @retval false  PHY 状态无效或 Ethernet 操作失败。
+ */
+static bool EthernetTest_SendRawFrame(const Lan8720Status *phy_status)
+{
+    EthernetLinkSpeed speed;
+    EthernetDuplexMode duplex;
+
+    uint8_t frame[60] = {0};
+
+    static const char payload[] = "STM32H7 raw Ethernet TX";
+
+    if ((phy_status == NULL) ||
+        !phy_status->link_up ||
+        !phy_status->auto_negotiation_complete)
+    {
+        return false;
+    }
+
+    if (phy_status->speed == LAN8720_SPEED_100M)
+    {
+        speed = ETHERNET_LINK_SPEED_100M;
+    }
+    else if (phy_status->speed == LAN8720_SPEED_10M)
+    {
+        speed = ETHERNET_LINK_SPEED_10M;
+    }
+    else
+    {
+        return false;
+    }
+
+    if (phy_status->duplex == LAN8720_DUPLEX_FULL)
+    {
+        duplex = ETHERNET_DUPLEX_FULL;
+    }
+    else if (phy_status->duplex == LAN8720_DUPLEX_HALF)
+    {
+        duplex = ETHERNET_DUPLEX_HALF;
+    }
+    else
+    {
+        return false;
+    }
+
+    if (!EthernetDriver_ConfigureLink(speed, duplex))
+    {
+        printf("[ETH] MAC link config failed\r\n");
+        return false;
+    }
+
+    if (!EthernetDriver_Start())
+    {
+        printf("[ETH] MAC/DMA start failed\r\n");
+        return false;
+    }
+
+    /*
+     * Destination MAC:
+     * FF:FF:FF:FF:FF:FF
+     */
+    memset(&frame[0], 0xFF, 6U);
+
+    /*
+     * Source MAC:
+     * frame[6] ~ frame[11] 保持为 0。
+     *
+     * EthernetDriver_Transmit() 使用 ETH_SRC_ADDR_REPLACE，
+     * MAC 硬件会用 MAC Address 0 替换这里的内容。
+     * 当前实际 MAC Address 0 由 CubeMX 的 MX_ETH_Init() 配置。
+     */
+
+    /*
+     * EtherType:
+     * 0x88B5，用于本地实验 Frame。
+     */
+    frame[12] = 0x88U;
+    frame[13] = 0xB5U;
+
+    memcpy(&frame[14], payload, sizeof(payload) - 1U);
+
+    if (!EthernetDriver_Transmit(frame, sizeof(frame), 100U))
+    {
+        printf("[ETH] HAL transmit failed\r\n");
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * @brief  Polling 接收指定数量的 0x88B5 测试 Ethernet Frame。
+ *
+ * @param[in] expected_count 期望收到的测试 Frame 数量。
+ * @param[in] timeout_ms     最大测试时间。
+ *
+ * @retval true   收到全部预期 Frame。
+ * @retval false  超时或 RX Driver 发生错误。
+ */
+static bool EthernetTest_WaitRawFrames(uint32_t expected_count, uint32_t timeout_ms)
+{
+    static const char expected_payload[] = "PC -> STM32H7 raw Ethernet RX";
+
+    uint32_t received_count = 0U;
+    uint32_t elapsed_ms = 0U;
+
+    while (elapsed_ms < timeout_ms)
+    {
+        uint16_t frame_length = 0U;
+
+        EthernetRxResult result = EthernetDriver_Receive(
+            g_ethernet_test_rx_frame,
+            sizeof(g_ethernet_test_rx_frame),
+            &frame_length);
+
+        if (result == ETHERNET_RX_ERROR)
+        {
+            printf("[ETH] RX driver error, count=%lu\r\n",
+                   (unsigned long)received_count);
+            return false;
+        }
+
+        if (result == ETHERNET_RX_FRAME)
+        {
+            if ((frame_length >= (14U + sizeof(expected_payload) - 1U)) &&
+                (g_ethernet_test_rx_frame[12] == 0x88U) &&
+                (g_ethernet_test_rx_frame[13] == 0xB5U) &&
+                (memcmp(&g_ethernet_test_rx_frame[14],
+                        expected_payload,
+                        sizeof(expected_payload) - 1U) == 0))
+            {
+                received_count++;
+
+                if ((received_count % 100U) == 0U)
+                {
+                    printf("[ETH] RX count=%lu\r\n",
+                           (unsigned long)received_count);
+                }
+
+                if (received_count >= expected_count)
+                {
+                    printf("[ETH] RX total=%lu\r\n",
+                           (unsigned long)received_count);
+                    return true;
+                }
+            }
+        }
+
+        osDelay(1U);
+        elapsed_ms += 1U;
+    }
+
+    printf("[ETH] RX timeout, count=%lu/%lu\r\n",
+           (unsigned long)received_count,
+           (unsigned long)expected_count);
+
+    return false;
+}
 
 /* USER CODE END Application */
 
