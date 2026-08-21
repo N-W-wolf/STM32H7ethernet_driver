@@ -18,8 +18,9 @@
 | Link / Speed / Duplex 读取 | 已实现 | 100 Mbit/s Full Duplex 已上板验证 |
 | Ethernet DMA 专用 SRAM 与 Descriptor 布局 | 已实现 | 已完成 Build / map 验证 |
 | MPU Ethernet DMA 内存属性 | 已实现 | 已完成静态检查与构建验证 |
-| RX/TX 数据 Buffer Pool | 未实现 | - |
-| 裸 Ethernet Frame RX/TX | 未实现 | - |
+| RX/TX 数据 Buffer Pool | 已实现 | 已完成 Build / map 与裸帧数据路径上板验证 |
+| 裸 Ethernet Frame TX | 已实现 | PC `tcpdump` 已抓到 `0x88B5` 测试帧 |
+| 裸 Ethernet Frame RX | 已实现 | 单帧与连续 1000 帧接收已上板验证 |
 | ETH IRQ + FreeRTOS 异步收发 | 未实现 | - |
 | LwIP `ethernetif` | 未实现 | - |
 | Static IPv4 / Ping | 未实现 | - |
@@ -245,9 +246,20 @@ STM32H743xx_FLASH.ld 中的项目 Ethernet DMA 布局
 
 当前 Ethernet DMA 内存不使用 CubeMX Memory Management Tool 自动管理。MPU 参数保存在 `.ioc` 中，linker 中的 Ethernet DMA section 由项目显式维护。重新 Generate Code 后应检查 `.ioc`、`Core/**` 和 linker diff，避免覆盖项目配置。
 
-## Ethernet DMA 内存
+## Ethernet DMA 内存与 Frame 数据路径
 
-当前验证板将 STM32H743 SRAM3 `0x30040000 ~ 0x30047FFF` 作为 Ethernet DMA 专用内存。RX/TX Descriptor 已固定地址并通过 map 文件验证；RX/TX 数据 Buffer Pool 尚未实现。
+当前验证板将 STM32H743 SRAM3 `0x30040000 ~ 0x30047FFF` 作为 Ethernet DMA 专用内存：
+
+```text
+RX Descriptor : 0x30040000
+TX Descriptor : 0x30040080
+RX Buffer Pool: 0x30042000 / 4 × 1536 B
+TX Buffer Pool: 0x30044000 / 4 × 1536 B
+```
+
+Descriptor 与 Buffer section 均由 linker 显式放置并通过 map 验证。第一版 Frame 路径采用 copy-based ownership：RX 在 HAL link callback 中复制到 CPU 侧帧暂存区后立即归还 DMA Buffer；TX 将调用者 Frame 复制到 TX DMA Buffer，并使用 polling `HAL_ETH_Transmit()` 完成基础发送。
+
+裸 Frame TX 已通过 PC 抓包验证；裸 Frame RX 已完成单帧和连续 1000 帧验证。当前连续测试约为 5 ms/帧，只用于验证 Buffer 回收与基础数据路径，不代表高负载压力测试通过。
 
 详细布局、MPU 属性和验证方法见 [`03_MEMORY_DMA.md`](docs/stm32h7_ethernet_project_docs/03_MEMORY_DMA.md)。
 

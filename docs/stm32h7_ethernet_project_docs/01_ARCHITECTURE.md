@@ -123,7 +123,45 @@ HAL_ETH_xxx()
 - ETH IRQ 对接；
 - 为 `ethernetif` 提供稳定的 Frame 级接口。
 
-当前已完成 STM32H743 Ethernet DMA 专用 SRAM、RX/TX Descriptor 地址和 MPU 属性配置。RX/TX 数据 Buffer Pool、裸 Frame 收发和异步 IRQ 数据路径尚未实现。
+当前 Frame 级接口：
+
+```c
+void EthernetDriver_Init(void);
+bool EthernetDriver_ConfigureLink(EthernetLinkSpeed speed, EthernetDuplexMode duplex);
+bool EthernetDriver_Start(void);
+bool EthernetDriver_Transmit(const uint8_t *frame, uint16_t length, uint32_t timeout_ms);
+EthernetRxResult EthernetDriver_Receive(uint8_t *frame, uint16_t capacity, uint16_t *length);
+```
+
+当前实现使用 4 个 RX Descriptor、4 个 TX Descriptor，并分别配置 4 个 1536 B 静态 DMA Buffer。第一版数据路径采用 copy-based ownership：
+
+```text
+RX DMA Buffer
+    ↓ HAL_ETH_RxLinkCallback()
+CPU 侧单帧暂存
+    ↓
+调用者 Frame Buffer
+```
+
+RX DMA Buffer 在 callback 完成复制后立即归还 RX Pool，HAL 可重新挂接给 Descriptor。
+
+TX 路径为：
+
+```text
+调用者 Frame
+    ↓ memcpy
+TX DMA Buffer
+    ↓
+HAL_ETH_Transmit() polling
+    ↓ HAL_OK
+归还 TX Buffer
+```
+
+PHY Auto-negotiation 得到的 Speed / Duplex 由调用层转换为通用 Driver 类型，再通过 `EthernetDriver_ConfigureLink()` 写入 MAC。MAC/DMA 使用 `EthernetDriver_Start()` 启动。
+
+裸 Frame TX 已由 PC 抓包上板验证；裸 Frame RX 已完成单帧与连续 1000 帧验证。该结果证明基础 Buffer recycle 和 polling 数据路径可持续工作，不代表高负载压力测试已经完成。
+
+ETH IRQ、FreeRTOS 异步 RX/TX、DMA 错误恢复和完整 Link change 生命周期尚未实现。
 
 DMA / MPU / linker 的详细配置见 `03_MEMORY_DMA.md`。
 
@@ -203,7 +241,7 @@ Ethernet DMA Descriptor 和 Buffer 必须显式放置，不能依赖默认 `.bss
 - linker section；
 - `.map` / ELF 中的实际地址。
 
-当前验证板使用独立 SRAM3 作为 Ethernet DMA 专用内存，并将该区域配置为 Non-cacheable；Descriptor 额外使用 Device memory 属性覆盖。
+当前验证板使用独立 SRAM3 作为 Ethernet DMA 专用内存，并将该区域配置为 Non-cacheable；Descriptor 额外使用 Device memory 属性覆盖。RX/TX Buffer section 也显式放置在该 SRAM3 中。
 
 ## 10. CubeMX 与项目维护边界
 

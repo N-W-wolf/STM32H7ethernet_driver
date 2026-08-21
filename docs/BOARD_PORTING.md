@@ -161,6 +161,17 @@ STM32H743xx_FLASH.ld
 - 使用 `ASSERT()` 检查地址、大小和 section 非空；
 - 构建后检查 `.map` / ELF。
 
+当前板参考：
+
+```text
+RX Descriptor = 0x30040000
+TX Descriptor = 0x30040080
+RX Pool       = 0x30042000 / 4 × 1536 B
+TX Pool       = 0x30044000 / 4 × 1536 B
+```
+
+这些地址属于当前板，不进入通用 Driver。
+
 不建议使用脚本通过正则或字符串替换修改 `.ld`。linker 配置属于板级硬件事实，应保持显式、可审查。
 
 如果项目需要同时维护多块板，可以在实际出现多板需求时把 linker 拆成 board-specific 文件并由构建系统选择。不要提前维护无实际用户的模板体系。
@@ -195,10 +206,19 @@ Device, Non-cacheable
 
 ## 9. Descriptor 与 Buffer
 
-至少确认：
+当前通用 Driver 的基线是：
 
-- `ETH_RX_DESC_CNT`；
-- `ETH_TX_DESC_CNT`；
+```text
+ETH_RX_DESC_CNT = 4
+ETH_TX_DESC_CNT = 4
+RX Buffer       = 4 × 1536 B
+TX Buffer       = 4 × 1536 B
+Alignment       = 32 B
+```
+
+迁移时至少确认：
+
+- Descriptor 数量是否仍适合目标板和负载；
 - HAL Descriptor 结构大小；
 - RX/TX Descriptor 实际地址；
 - RX Buffer 数量和大小；
@@ -208,7 +228,7 @@ Device, Non-cacheable
 - HAL RX Allocate / Link callback 行为；
 - TX completion / free 行为。
 
-Descriptor 数量变化后，必须重新检查 linker slot 和 `.map`，不能假设原地址仍然安全。
+当前 copy-based RX ownership 可以跨板复用，但物理 SRAM 和 linker 地址必须重新确认。Descriptor 或 Buffer 数量变化后，必须同步调整 linker pool 大小断言和 `.map` 验证。
 
 ## 10. ETH IRQ 与 FreeRTOS
 
@@ -233,7 +253,7 @@ Descriptor 数量变化后，必须重新检查 linker slot 和 `.map`，不能�
 检查 `.map`：
 
 ```bash
-grep -E "RxDescripSection|TxDescripSection|DMARxDscrTab|DMATxDscrTab" \
+grep -E "RxDescripSection|TxDescripSection|eth_dma_rx|eth_dma_tx|DMARxDscrTab|DMATxDscrTab" \
   build/Debug/stm32H7ethernet_demo.map
 ```
 
@@ -244,11 +264,12 @@ arm-none-eabi-nm -n build/Debug/stm32H7ethernet_demo.elf | \
   grep -E "DMARxDscrTab|DMATxDscrTab"
 ```
 
-如果已经建立 RX/TX Buffer section，还需要检查：
+需要确认：
 
-- Buffer 是否全部位于 DMA 可达 SRAM；
-- section 是否越界；
-- 地址是否满足对齐要求。
+- Descriptor / Buffer 全部位于 DMA 可达 SRAM；
+- section 不越界；
+- 地址满足对齐要求；
+- RX/TX Pool 大小与 Driver 当前配置一致。
 
 ## 12. 上板验证
 
@@ -262,8 +283,9 @@ arm-none-eabi-nm -n build/Debug/stm32H7ethernet_demo.elf | \
 6. Descriptor / Buffer DMA 访问；
 7. 裸 Ethernet Frame TX；
 8. 裸 Ethernet Frame RX；
-9. IRQ / FreeRTOS 异步收发；
-10. LwIP / Ping / UDP / TCP。
+9. 连续 Frame RX Buffer recycle；
+10. IRQ / FreeRTOS 异步收发；
+11. LwIP / Ping / UDP / TCP。
 
 每一项都区分：
 

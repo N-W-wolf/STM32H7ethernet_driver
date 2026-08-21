@@ -1,6 +1,6 @@
 # Ethernet DMA / MPU / Cache Design
 
-本文记录 STM32H7 Ethernet DMA 使用的内存、Descriptor、MPU、Cache 和 linker 约束。内容以当前代码、STM32H743 内存架构和构建结果为依据。
+本文记录 STM32H7 Ethernet DMA 使用的内存、Descriptor、Buffer、MPU、Cache 和 linker 约束。内容以当前代码、STM32H743 内存架构、构建结果和已完成的裸 Frame 上板验证为依据。
 
 ## 1. 设计目标
 
@@ -33,7 +33,7 @@ End  : 0x30047FFF
 
 - Ethernet DMA 可访问该区域；
 - 可以与普通应用 RAM 分离；
-- 32 KiB 足以容纳当前 Descriptor，并为 RX/TX Buffer Pool 保留空间；
+- 32 KiB 可以容纳当前 Descriptor 和 RX/TX Buffer Pool；
 - 32 KiB 适合配置为一个 MPU Region；
 - 换板时可以通过板级 linker / MPU 替换物理 SRAM，而无需把地址写入通用 Driver。
 
@@ -110,7 +110,120 @@ linker 同时检查：
 
 这些检查可以在 CubeMX section 名变化、Descriptor 数量增加或布局被意外覆盖时尽早让链接失败。
 
-## 5. MPU 配置
+## 5. RX/TX Buffer Pool
+
+当前通用 Driver 使用：
+
+```text
+RX Buffer Count = ETH_RX_DESC_CNT = 4
+TX Buffer Count = ETH_TX_DESC_CNT = 4
+Buffer Size     = 1536 B
+Alignment       = 32 B
+```
+
+通用 Driver 只定义 input section：
+
+```text
+.eth_dma_buffer.rx
+.eth_dma_buffer.tx
+```
+
+物理地址由当前板 linker 决定：
+
+| 对象 | 地址范围 | 大小 |
+| --- | --- | ---: |
+| RX Buffer Pool | `0x30042000 ~ 0x300437FF` | `0x1800` / 6144 B |
+| TX Buffer Pool | `0x30044000 ~ 0x300457FF` | `0x1800` / 6144 B |
+
+linker：
+
+```ld
+.eth_dma_rx 0x30042000 (NOLOAD) :
+{
+    . = ALIGN(32);
+    KEEP(*(.eth_dma_buffer.rx))
+    . = ALIGN(32);
+} >RAM_ETH
+
+.eth_dma_tx 0x30044000 (NOLOAD) :
+{
+    . = ALIGN(32);
+    KEEP(*(.eth_dma_buffer.tx))
+    . = ALIGN(32);
+} >RAM_ETH
+```
+
+并固定检查：
+
+```text
+ADDR(.eth_dma_rx) = 0x30042000
+SIZEOF(.eth_dma_rx) = 0x1800
+ADDR(.eth_dma_tx) = 0x30044000
+SIZEOF(.eth_dma_tx) = 0x1800
+```
+
+因此当前 RAM_ETH 的关键布局为：
+
+```text
+0x30040000  RX Descriptor
+0x30040080  TX Descriptor
+0x30042000  RX Buffer Pool, 4 × 1536 B
+0x30044000  TX Buffer Pool, 4 × 1536 B
+0x30045800  当前 TX Pool 结束后的首地址
+0x30048000  RAM_ETH End + 1
+```
+
+通用 `Drivers/Ethernet` 中不写入这些物理 SRAM 地址。
+
+## 6. Buffer ownership
+
+### RX
+
+`HAL_ETH_Start()` 建立 RX Descriptor 时，通过强符号 `HAL_ETH_RxAllocateCallback()` 从静态 RX Pool 分配 Buffer。
+
+Polling 接收时：
+
+```text
+DMA owns RX Buffer
+    ↓ Frame received
+HAL_ETH_ReadData()
+    ↓
+HAL_ETH_RxLinkCallback()
+    ↓ memcpy
+CPU side g_rx_frame
+    ↓
+RX DMA Buffer immediately released to pool
+    ↓
+HAL ETH_UpdateDescriptor()
+    ↓
+Buffer can be allocated to an RX Descriptor again
+```
+
+`EthernetDriver_Receive()` 再把完整 `g_rx_frame` 复制到调用者提供的 Frame Buffer。上层不会长期持有 DMA RX Buffer。
+
+当前这种 copy-based ownership 已完成单帧和连续 1000 帧上板验证。
+
+### TX
+
+当前 TX 使用 polling：
+
+```text
+Caller Frame
+    ↓ memcpy
+Acquire static TX DMA Buffer
+    ↓
+HAL_ETH_Transmit()
+    ↓ HAL_OK
+Release TX DMA Buffer
+```
+
+正常发送成功路径已经上板验证。
+
+如果 `HAL_ETH_Transmit()` 返回错误，当前 Driver 不立即把该 TX Buffer 标记为空闲，因为 DMA 状态可能尚未完全确定。完整 DMA error recovery 和 Buffer 统一回收机制尚未实现。
+
+异步 `HAL_ETH_Transmit_IT()` 的 completion ownership 不属于当前 polling 基线，后续需要结合 `HAL_ETH_ReleaseTxPacket()` / Tx free callback 单独设计。
+
+## 7. MPU 配置
 
 当前 `.ioc` 直接配置 Cortex-M7 MPU，不使用 Memory Management Tool 自动接管 Ethernet 内存。
 
@@ -154,9 +267,9 @@ Bufferable    : Yes
     Normal / Non-cacheable
 ```
 
-Descriptor 位于前 256 B 内。
+Descriptor 位于前 256 B 内，RX/TX Buffer Pool 位于 Region 1 的 Normal Non-cacheable 区域。
 
-## 6. D-Cache 策略
+## 8. D-Cache 策略
 
 当前工程：
 
@@ -177,7 +290,7 @@ Ethernet DMA 专用 SRAM3 已配置为 Non-cacheable，因此该区域的设计�
 
 在 Cache 属性改变前，不在通用 Driver 中提前加入无实际需求的 Cache maintenance 抽象。
 
-## 7. SRAM3 时钟
+## 9. SRAM3 时钟
 
 当前验证板在 `BSP/stm32h743vit6_iot/board_ethernet.c` 中提供：
 
@@ -214,15 +327,15 @@ MX_GPIO_Init()
 MX_USART1_UART_Init()
 ↓
 MX_ETH_Init()
+↓
+EthernetDriver_Init()
 ```
 
-因此 SRAM3 在 Ethernet HAL 初始化接触 Descriptor 前已经准备完成。
+因此 SRAM3 在 Ethernet HAL 初始化接触 Descriptor 前已经准备完成，Driver software ownership 也在 MAC/DMA Start 前初始化。
 
-## 8. CubeMX / MMT 管理边界
+## 10. CubeMX / MMT 管理边界
 
 当前项目不使用 CubeMX Memory Management Tool 自动生成 Ethernet DMA linker section。
-
-原因是实际验证中，MMT 对小尺寸 Descriptor region、RX Pool region 与生成 linker / MPU 的表达不适合当前静态 Buffer Pool 设计，并增加了配置源不一致的风险。
 
 当前职责：
 
@@ -234,10 +347,15 @@ MX_ETH_Init()
 STM32H743xx_FLASH.ld
     → 保存当前板 RAM_ETH 物理布局
     → 固定 RX/TX Descriptor section
+    → 固定 RX/TX Buffer Pool section
     → 提供 linker ASSERT
 
 BSP
     → 准备当前板 DMA SRAM 时钟
+
+Ethernet Driver
+    → 定义通用 Buffer input section
+    → 管理 Frame / Buffer ownership
 ```
 
 重新使用 CubeMX Generate Code 后必须检查相关 diff，尤其是：
@@ -251,14 +369,14 @@ STM32H743xx_FLASH.ld
 
 `cmake/stm32cubemx/CMakeLists.txt` 仍由 CubeMX 管理，不手工修改。
 
-## 9. 地址验证
+## 11. 地址验证
 
 构建后应检查 `.map` 或 ELF symbol，不能只根据 linker 源文件推断实际地址。
 
 示例：
 
 ```bash
-grep -E "RxDescripSection|TxDescripSection|DMARxDscrTab|DMATxDscrTab" \
+grep -E "RxDescripSection|TxDescripSection|eth_dma_rx|eth_dma_tx|DMARxDscrTab|DMATxDscrTab" \
   build/Debug/stm32H7ethernet_demo.map
 ```
 
@@ -274,35 +392,32 @@ arm-none-eabi-nm -n build/Debug/stm32H7ethernet_demo.elf | \
 ```text
 DMARxDscrTab = 0x30040000
 DMATxDscrTab = 0x30040080
+.eth_dma_rx  = 0x30042000 / 0x1800
+.eth_dma_tx  = 0x30044000 / 0x1800
 ```
 
-对应 output section 实际大小均为 96 B。
+Descriptor output section 实际大小均为 96 B，Buffer Pool output section 均为 6144 B。
 
-该结果属于 Build / Map Verified，不等同于 Ethernet DMA 裸 Frame 数据路径已经上板验证。
+## 12. 数据路径验证
 
-## 10. RX/TX Buffer Pool
-
-RX/TX 数据 Buffer Pool 尚未实现。
-
-因此以下内容当前没有固定值：
-
-- RX Buffer 数量；
-- TX Buffer 数量；
-- RX/TX Buffer output section；
-- Buffer 在 `RAM_ETH` 中的最终地址；
-- HAL RX Allocate / Link callback 的静态 Buffer ownership；
-- TX Buffer 的任务 / DMA ownership；
-- RX/TX Buffer 回收策略。
-
-已保留的 SRAM3 空间：
+当前已完成：
 
 ```text
-0x30040100 ~ 0x30047FFF
+Raw TX:
+STM32H743 → LAN8720AI → PC
+60 B / EtherType 0x88B5
+PC tcpdump 实际抓包成功
+
+Raw RX:
+PC → LAN8720AI → STM32H743
+60 B 单帧接收成功
+连续 1000 / 1000 帧接收成功
+PC 发送间隔约 5 ms
 ```
 
-ETH 参数中存在 `RxBufferAddress = 0x30042000`，但在实际 Buffer Pool 建立并通过 linker / map 验证前，不把该值描述成有效 RX Buffer Pool 地址。
+连续 1000 帧结果证明当前 4 RX Descriptor + 4 RX Buffer 的基础 recycle 路径能够反复工作，不代表吞吐极限、长时间稳定性或高负载 drop 已经验证。
 
-## 11. 可移植性要求
+## 13. 可移植性要求
 
 迁移到另一块板时，需要重新确认：
 
@@ -328,7 +443,7 @@ RAM_ETH
 
 完整迁移步骤见 `docs/BOARD_PORTING.md`。
 
-## 12. 自动化原则
+## 14. 自动化原则
 
 当前不使用脚本通过正则或字符串替换自动修改 linker script。
 

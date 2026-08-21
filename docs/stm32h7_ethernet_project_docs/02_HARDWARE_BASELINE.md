@@ -56,7 +56,7 @@ STM32H743 PA1 / RMII_REF_CLK
 - PHY 使用 25 MHz 晶振；
 - LAN8720AI 配置支持 REF_CLK Out Mode；
 - STM32H743 从 PA1 接收 RMII REF_CLK；
-- PHY Reset、MDIO、Auto-negotiation 和 Link 已可正常工作，从功能上支持该时钟路径有效。
+- PHY Reset、MDIO、Auto-negotiation、Link 和裸 Ethernet Frame 收发均已正常工作，从功能上支持该时钟路径有效。
 
 未独立测量：
 
@@ -150,6 +150,8 @@ Full Duplex 可读取
 单次网线拔出 / 插回可恢复 Link 状态
 ```
 
+PHY Auto-negotiation 得到的 100 Mbit/s Full Duplex 状态已用于配置 STM32 Ethernet MAC，并完成裸 Frame TX/RX 验证。
+
 尚未完成专项验证：
 
 - 10 Mbit/s 实际链路；
@@ -216,14 +218,16 @@ RAM_D2
 256 KiB
 ```
 
-已配置 Descriptor：
+当前 Descriptor 与 Buffer 布局：
 
 ```text
 RX Descriptor  0x30040000
 TX Descriptor  0x30040080
+RX Buffer Pool 0x30042000 / 4 × 1536 B / 0x1800 B
+TX Buffer Pool 0x30044000 / 4 × 1536 B / 0x1800 B
 ```
 
-当前 4 个 Descriptor 的实际 section 大小均为 96 B，并已通过 linker / map 验证。
+4 个 RX Descriptor 和 4 个 TX Descriptor 的实际 section 大小均为 96 B。Descriptor 和 Buffer Pool 均通过 linker / map 验证，Buffer 为 32-byte aligned。
 
 MPU：
 
@@ -239,7 +243,15 @@ Region 2 编号更高，覆盖 SRAM3 前 256 B 的 Descriptor 区域。
 
 板级初始化在 `MX_ETH_Init()` 前调用 `BoardEthernet_PrepareDmaMemory()`，显式使能 D2 SRAM3 时钟。
 
-当前 CPU I-Cache / D-Cache 均未启用。RX/TX 数据 Buffer Pool 尚未实现，因此 Buffer 实际地址和 ownership 仍未形成可验证数据路径。
+当前 CPU I-Cache / D-Cache 均未启用。
+
+当前 DMA Buffer 数据路径已完成上板验证：
+
+- STM32 → PC 裸 Frame TX，PC `tcpdump` 抓到源 MAC `00:80:E1:00:00:00`、EtherType `0x88B5` 的 60 B Frame；
+- PC → STM32 裸 Frame RX，单帧 60 B 接收成功；
+- PC 约每 5 ms 发送一帧时，STM32 连续接收 1000 / 1000 帧成功。
+
+该连续测试用于验证基础 RX Buffer recycle，不等同于高负载或长时间压力测试。
 
 详细设计见 `03_MEMORY_DMA.md`。
 
@@ -257,21 +269,28 @@ Region 2 编号更高，覆盖 SRAM3 前 256 B 的 Descriptor 区域。
 - 100 Mbit/s；
 - Full Duplex；
 - 单次网线拔出 / 插回恢复；
-- USART1 调试输出。
+- USART1 调试输出；
+- MAC Speed / Duplex 同步；
+- 裸 Ethernet Frame TX；
+- 裸 Ethernet Frame RX；
+- RX DMA Buffer 连续 1000 帧 recycle 路径。
 
 ### Build / Map Verified
 
 - SRAM3 从普通 `RAM_D2` 中独立为 `RAM_ETH`；
 - RX Descriptor = `0x30040000`；
 - TX Descriptor = `0x30040080`；
-- Descriptor linker size / non-empty 断言通过。
+- RX Buffer Pool = `0x30042000` / `0x1800`；
+- TX Buffer Pool = `0x30044000` / `0x1800`；
+- Descriptor / Buffer linker 地址、大小和非空断言通过。
 
 ### 尚未独立测量或功能验证
 
 - 25 MHz PHY 晶振频率；
 - PA1 / RMII_REF_CLK 频率；
-- Ethernet DMA 裸 Frame RX/TX；
-- RX/TX Buffer 数据路径；
+- 10 Mbit/s / Half Duplex 实际链路；
+- ETH IRQ + FreeRTOS 异步数据路径；
+- 长时间 / 高负载 Ethernet DMA；
 - Cache 开启后的数据路径。
 
 ## 12. 资料依据
@@ -282,4 +301,5 @@ Region 2 编号更高，覆盖 SRAM3 前 256 B 的 Descriptor 区域。
 - STM32H743 Datasheet / Reference Manual；
 - LAN8720A/LAN8720Ai Datasheet；
 - 当前仓库 STM32H7 HAL 1.11.6 Ethernet 源码；
-- 当前仓库 `.ioc`、BSP、linker 和构建结果。
+- 当前仓库 `.ioc`、BSP、linker 和构建结果；
+- 裸 Frame TX/RX 上板测试结果。

@@ -99,18 +99,24 @@ Debug / Release fresh build 的正式重复记录仍可补充。
 - Descriptor linker ASSERT；
 - MPU Normal Non-cacheable + Device overlay；
 - SRAM3 时钟准备；
-- Descriptor Build / map 地址验证。
+- RX/TX 静态 DMA Buffer Pool；
+- Buffer linker section / 地址验证；
+- HAL RX Allocate / Link callback ownership；
+- polling TX Buffer ownership；
+- PHY Speed / Duplex 与 MAC 同步；
+- `HAL_ETH_Start()` 基础生命周期；
+- 裸 Ethernet Frame TX 上板验证；
+- 裸 Ethernet Frame RX 单帧及连续 1000 帧上板验证。
 
 未完成：
 
-- RX/TX Buffer Pool；
-- Buffer ownership；
-- MAC Speed / Duplex 同步；
-- 裸 Frame TX / RX；
 - ETH IRQ；
-- FreeRTOS 异步收发；
-- DMA 数据路径上板验证；
-- 压力测试。
+- FreeRTOS 异步 RX/TX；
+- TX 异步 completion ownership；
+- DMA / MAC 错误统计与恢复；
+- Link Down / Up 时完整 MAC Stop / Reconfigure / Start 生命周期；
+- 长时间和高负载压力测试；
+- D-Cache 开启后的专项验证。
 
 ### M3：LwIP + IP
 

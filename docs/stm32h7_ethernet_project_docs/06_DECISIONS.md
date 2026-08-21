@@ -404,7 +404,7 @@ DMARxDscrTab = 0x30040000
 DMATxDscrTab = 0x30040080
 ```
 
-本决定只冻结 DMA 专用 SRAM、Descriptor 地址、MPU 和 linker 基础边界；RX/TX Buffer 数量、最终 Buffer section / 地址和 ownership 仍未冻结。
+本决定只冻结 DMA 专用 SRAM、Descriptor 地址、MPU 和 linker 基础边界；RX/TX Buffer 数量、最终 Buffer section / 地址和 ownership 在该决定形成时仍未冻结，后续由 D019 补充。
 
 ---
 
@@ -441,3 +441,73 @@ CubeMX Generate Code 后必须检查 linker diff，避免自定义 `RAM_ETH`、D
 `.ioc` 负责保存 ETH Descriptor 地址和 Cortex-M7 MPU Region；项目 linker 负责物理 DMA SRAM 与 section；BSP 负责当前板 DMA SRAM 的时钟准备。
 
 理由：当前 CubeMX 6.18.1 实际试验中，MMT 对 Descriptor / RX Pool region 的生成表达与静态 Buffer Pool 设计不匹配，并出现 linker 配置源不一致风险。
+
+---
+
+## D019 第一版 Payload Buffer 与 ownership
+
+- 状态：Accepted
+- 日期：2026-08-21
+
+第一版 Ethernet Frame 数据路径采用静态、copy-based DMA Buffer ownership。
+
+当前通用 Driver 配置：
+
+```text
+RX Buffer Count = ETH_RX_DESC_CNT = 4
+TX Buffer Count = ETH_TX_DESC_CNT = 4
+Buffer Size     = 1536 B
+Alignment       = 32 B
+```
+
+通用 Driver 只定义：
+
+```text
+.eth_dma_buffer.rx
+.eth_dma_buffer.tx
+```
+
+物理地址由板级 linker 决定。当前 STM32H743VIT6 验证板为：
+
+```text
+RX Pool = 0x30042000 / 0x1800 / 4 × 1536 B
+TX Pool = 0x30044000 / 0x1800 / 4 × 1536 B
+```
+
+RX ownership：
+
+```text
+DMA RX Buffer
+→ HAL_ETH_RxLinkCallback()
+→ memcpy 到 CPU 侧单帧暂存区
+→ 立即归还 RX Pool
+→ HAL 重建 Descriptor 时重新分配
+```
+
+TX polling ownership：
+
+```text
+Caller Frame
+→ memcpy 到静态 TX DMA Buffer
+→ HAL_ETH_Transmit(timeout)
+→ HAL_OK 后归还 Buffer
+```
+
+HAL TX 错误路径不假定 DMA 已完全放弃 Buffer，因此当前不立即复用该 Buffer；完整 error recovery 后续单独设计。
+
+该设计已完成：
+
+- linker / map 地址与大小验证；
+- 裸 Frame TX 上板验证；
+- 裸 Frame RX 单帧验证；
+- 连续 1000 帧 RX Buffer recycle 上板验证。
+
+本决定不冻结：
+
+- `HAL_ETH_Transmit_IT()` 异步 TX completion ownership；
+- DMA error recovery；
+- 完整 Link change 生命周期；
+- Cacheable Buffer 方案；
+- Zero Copy。
+
+Zero Copy 仍遵循 D006：在正确性、压力测试和性能测量完成前不主动引入。

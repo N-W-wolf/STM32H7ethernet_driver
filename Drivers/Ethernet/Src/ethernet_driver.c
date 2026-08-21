@@ -8,7 +8,7 @@
 #include "stm32h7xx_hal.h"
 #include "eth.h"
 
-#define ETHERNET_DMA_BUFFER_SIZE  1536U
+#define ETHERNET_DMA_BUFFER_SIZE  ETHERNET_FRAME_BUFFER_SIZE
 #define ETHERNET_DMA_ALIGNMENT    32U
 
 /**
@@ -25,12 +25,12 @@ typedef struct
 } EthernetRxFrameStorage;
 
 static uint8_t g_rx_dma_buffers[ETH_RX_DESC_CNT][ETHERNET_DMA_BUFFER_SIZE]
-    __attribute__((section(".eth_dma_buffer.rx"), 
+    __attribute__((section(".eth_dma_buffer.rx"),
                    aligned(ETHERNET_DMA_ALIGNMENT),
                    used));
 
 static uint8_t g_tx_dma_buffers[ETH_TX_DESC_CNT][ETHERNET_DMA_BUFFER_SIZE]
-    __attribute__((section(".eth_dma_buffer.tx"), 
+    __attribute__((section(".eth_dma_buffer.tx"),
                    aligned(ETHERNET_DMA_ALIGNMENT),
                    used));
 
@@ -219,7 +219,8 @@ bool EthernetDriver_Start(void)
  *
  * @details
  * Frame 首先复制到静态 TX DMA Buffer，再交给 HAL_ETH_Transmit()。
- * 本函数返回后 TX DMA Buffer 立即归还 Driver。
+ * HAL 返回 HAL_OK 后归还 TX DMA Buffer；错误路径保留当前 Buffer ownership，
+ * 等待后续错误恢复机制处理，避免在 DMA 状态不确定时提前复用 Buffer。
  *
  * @param[in] frame       Ethernet Frame，包含目的 MAC、源 MAC、EtherType 和 Payload，
  *                        不包含 FCS。

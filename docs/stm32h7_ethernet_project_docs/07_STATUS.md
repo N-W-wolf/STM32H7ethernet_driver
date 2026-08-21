@@ -2,7 +2,7 @@
 
 - 更新时间：2026-08-21
 - 当前阶段：M2 — STM32H743 MAC / DMA
-- 当前状态：Ethernet DMA 内存、Descriptor 地址、MPU 和 SRAM3 时钟基础已完成；RX/TX Buffer ownership 与裸 Frame 数据路径尚未实现。
+- 当前状态：Polling MAC/DMA Frame 数据路径已建立并完成裸 TX、裸 RX 与连续 1000 帧 RX 上板验证；ETH IRQ + FreeRTOS 异步收发尚未实现。
 
 ## 1. 已完成
 
@@ -33,7 +33,7 @@
 - [x] Full Duplex；
 - [x] 单次网线拔出 / 插回恢复。
 
-### MAC / DMA 内存基础
+### MAC / DMA 内存与 ownership
 
 - [x] 核对 STM32H743 Ethernet DMA 可访问 SRAM；
 - [x] 不使用 DTCM 作为 Ethernet DMA 内存；
@@ -47,18 +47,33 @@
 - [x] MPU Region 2：前 256 B Device Non-cacheable overlay；
 - [x] `BoardEthernet_PrepareDmaMemory()` 显式使能 D2 SRAM3 时钟；
 - [x] DMA SRAM 在 `MX_ETH_Init()` 前准备；
-- [x] Build / map 验证 Descriptor 实际地址；
+- [x] RX Buffer Pool：`0x30042000` / 4 × 1536 B；
+- [x] TX Buffer Pool：`0x30044000` / 4 × 1536 B；
+- [x] Buffer section linker ASSERT；
+- [x] Build / map 验证 Descriptor 与 Buffer 实际地址；
+- [x] HAL RX Allocate / Link callback ownership；
+- [x] polling TX success-path ownership；
 - [x] CubeMX MMT 管理边界已明确。
+
+### MAC / DMA polling 数据路径
+
+- [x] PHY Speed / Duplex → MAC 配置；
+- [x] `HAL_ETH_Start()`；
+- [x] `EthernetDriver_Transmit()`；
+- [x] `EthernetDriver_Receive()`；
+- [x] 裸 Ethernet Frame TX；
+- [x] 裸 Ethernet Frame RX；
+- [x] 连续 1000 帧 RX Buffer recycle。
 
 ### 文档约定
 
-- [x] README 改为产品 / 库视角；
+- [x] README 保持产品 / 库视角；
 - [x] 面向使用者的技术文档不展示内部开发阶段；
 - [x] 项目控制文档保留里程碑 / 状态 / Handoff；
 - [x] 建立 `docs/BOARD_PORTING.md`；
-- [x] `03_MEMORY_DMA.md` 记录当前有效 DMA / MPU / linker 设计；
+- [x] `03_MEMORY_DMA.md` 记录当前有效 DMA / MPU / linker / Buffer ownership 设计；
 - [x] 确定板级 linker 采用显式配置 + map/ELF 验证，不使用 regex patch 脚本；
-- [x] 移除重复的《STM32H7 Ethernet 通用驱动开发指导与规划》，统一由 `01_ARCHITECTURE.md` 承担架构技术文档职责。
+- [x] `01_ARCHITECTURE.md` 作为唯一架构技术文档。
 
 ## 2. 已确认验证结果
 
@@ -84,31 +99,51 @@ RAM_D2       = 0x30000000 / 256 KiB
 RAM_ETH      = 0x30040000 / 32 KiB
 DMARxDscrTab = 0x30040000
 DMATxDscrTab = 0x30040080
-RX section   = 96 B
-TX section   = 96 B
+RX Desc      = 96 B
+TX Desc      = 96 B
+RX Pool      = 0x30042000 / 0x1800
+TX Pool      = 0x30044000 / 0x1800
 ```
 
-Descriptor linker ASSERT 全部通过。
+Descriptor / Buffer linker ASSERT 全部通过。
 
-该结果只证明链接布局正确，不等同于 Ethernet DMA Frame 数据路径已经上板验证。
+### Raw Frame On-board Verified
 
-## 3. 当前实现边界
+测试固件基线：`e50bf6a4ce9c3763e6b863b5982522b4e60ac197`。
 
-### MPU
+TX：
 
 ```text
-Region 1
-0x30040000 / 32 KiB
-Normal, Non-cacheable, Non-bufferable, Shareable, XN
-
-Region 2
-0x30040000 / 256 B
-Device, Non-cacheable, Bufferable, Non-shareable, XN
+Source MAC  = 00:80:E1:00:00:00
+Destination = FF:FF:FF:FF:FF:FF
+EtherType   = 0x88B5
+Length      = 60 B
+Payload     = STM32H7 raw Ethernet TX
 ```
 
-当前 CPU I-Cache / D-Cache 均为 Disabled。
+PC `tcpdump` 实际抓包成功。
 
-### Board Port
+RX：
+
+```text
+EtherType = 0x88B5
+Length    = 60 B
+Payload   = PC -> STM32H7 raw Ethernet RX
+```
+
+结果：
+
+```text
+单帧 RX         PASS
+连续 RX         1000 / 1000 PASS
+PC 发送间隔     约 5 ms / Frame
+```
+
+连续 1000 帧仅证明基础 Buffer recycle，没有完成高负载或长时间压力测试。
+
+## 3. 当前代码接口
+
+### Board Ethernet BSP
 
 ```text
 BoardEthernet_PhyResetAssert()
@@ -126,6 +161,20 @@ Lan8720_RestartAutoNegotiation()
 Lan8720_GetStatus()
 ```
 
+### Ethernet Driver
+
+```text
+EthernetDriver_Init()
+EthernetDriver_ConfigureLink()
+EthernetDriver_Start()
+EthernetDriver_Transmit()
+EthernetDriver_Receive()
+```
+
+当前 `Transmit()` / `Receive()` 为 polling Frame API。启动路径在 PHY 首次 Auto-negotiation 成功后同步 MAC Speed / Duplex 并启动 MAC/DMA。
+
+已完成的 `0x88B5` 裸 Frame 测试代码不再保留在正常启动路径；测试证据记录在 `05_TEST_PLAN.md` 和本文件。
+
 ## 4. 当前未完成
 
 ### M1 补充测试
@@ -141,18 +190,12 @@ Lan8720_GetStatus()
 
 ### M2
 
-- [ ] RX Buffer Pool；
-- [ ] TX Buffer Pool；
-- [ ] HAL RX Allocate / Link callback ownership；
-- [ ] TX Buffer ownership；
-- [ ] Buffer linker section / 实际地址；
-- [ ] MAC Speed / Duplex 与 PHY 状态同步；
-- [ ] 裸 Ethernet Frame TX；
-- [ ] 裸 Ethernet Frame RX；
 - [ ] ETH IRQ；
-- [ ] FreeRTOS 异步 RX/TX；
+- [ ] FreeRTOS 异步 RX；
+- [ ] FreeRTOS 异步 TX completion；
 - [ ] RX/TX 错误统计；
-- [ ] DMA 数据路径上板验证；
+- [ ] DMA error / timeout recovery；
+- [ ] Link Down / Up 完整 MAC lifecycle；
 - [ ] 长时间 / 高负载稳定性；
 - [ ] Cache 开启后的专项验证。
 
@@ -178,39 +221,49 @@ HAL Timebase      : TIM6
 Debug UART        : USART1, 115200 8N1
 CPU D-Cache       : Disabled
 Ethernet DMA RAM  : SRAM3 / 0x30040000 / 32 KiB
+RX Buffer Pool    : 0x30042000 / 4 × 1536 B
+TX Buffer Pool    : 0x30044000 / 4 × 1536 B
 ```
 
 ## 6. 当前尚未冻结的设计
 
 以下内容不能在新对话中自行假定：
 
-- RX Buffer 数量；
-- TX Buffer 数量；
-- RX/TX Buffer 最终地址；
-- RX/TX ownership；
 - Cache 开启后的最终策略；
 - ETH IRQ 优先级；
-- Ethernet RX Task / notification 机制；
+- Ethernet RX Task 的最终优先级 / 栈大小；
+- RX notification 最终机制；
+- 异步 TX completion ownership；
+- DMA error recovery；
 - MAC Link change 时的完整启停策略；
 - LwIP Heap / Pool 参数；
 - `tcpip_thread` 参数；
 - Socket / Netconn / Raw API 最终选择；
 - 最终 Link poll 周期和承载任务。
 
+当前 RX/TX Buffer 数量、大小、section、板级地址和 copy-based polling ownership 已由 D019 Accepted，不再列为未冻结项。
+
 ## 7. 下一工作单元建议
 
-继续 M2，优先完成 RX/TX Buffer Pool 与 HAL 1.11.6 ownership 设计。
+继续 M2，只推进：
 
-建议先确定：
+```text
+ETH IRQ
+→ HAL callback
+→ FreeRTOS Task Notification
+→ RX Task
+→ HAL_ETH_ReadData() / EthernetDriver_Receive()
+```
 
-1. HAL `HAL_ETH_Start()` / `HAL_ETH_ReadData()` / RX callbacks 的真实生命周期；
-2. RX Descriptor 与 RX Buffer 数量关系；
-3. TX Buffer 分配和 completion ownership；
-4. Buffer linker section 与 SRAM3 地址；
-5. map 验证；
-6. 再进入裸 Frame TX / RX。
+边界：
 
-本工作单元不扩展到 LwIP、Ping、UDP 或 TCP。
+- 先只异步化 RX；
+- 不同时实现异步 TX；
+- 不进入 LwIP；
+- 不实现 Ping / UDP / TCP；
+- 不在本工作单元顺手完成完整 Link lifecycle。
+
+完成标准：ETH IRQ 能稳定唤醒 RX Task，ISR 保持短小，RX Frame 在任务上下文读取，连续收包下没有明显 ownership 泄漏或丢失。
 
 ## 8. 更新规则
 

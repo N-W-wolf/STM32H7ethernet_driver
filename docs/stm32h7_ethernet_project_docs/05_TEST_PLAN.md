@@ -79,7 +79,7 @@ Duplex      = Full
 
 ## M2：MAC / DMA
 
-### 内存与 Descriptor
+### 内存、Descriptor 与 Buffer
 
 - [x] Ethernet DMA 可访问 SRAM 选择 — Static Review，Reference Manual 支持 SRAM3；
 - [x] SRAM3 独立为 `RAM_ETH` — Build Verified；
@@ -88,11 +88,12 @@ Duplex      = Full
 - [x] Descriptor section 非空 / slot 大小断言 — Build Verified；
 - [x] MPU Region 配置 — Static Review + Build Verified；
 - [x] SRAM3 时钟在 `MX_ETH_Init()` 前准备 — Static Review + Build Verified；
-- [ ] RX Buffer 地址；
-- [ ] TX Buffer 地址；
-- [ ] RX Buffer ownership；
-- [ ] TX Buffer ownership；
-- [ ] DMA 对 Buffer 的上板访问验证；
+- [x] RX Buffer Pool `0x30042000` / 4 × 1536 B — Build / Map Verified；
+- [x] TX Buffer Pool `0x30044000` / 4 × 1536 B — Build / Map Verified；
+- [x] RX Buffer ownership / recycle — Static Review + On-board Verified；
+- [x] TX polling success-path ownership — Static Review + On-board Verified；
+- [x] DMA 对 RX/TX Buffer 的上板访问验证；
+- [ ] TX error / timeout 后完整 Buffer recovery；
 - [ ] D-Cache 开启后的数据路径验证。
 
 当前 map 结果：
@@ -102,6 +103,8 @@ DMARxDscrTab = 0x30040000
 DMATxDscrTab = 0x30040080
 Rx section   = 96 B
 Tx section   = 96 B
+.eth_dma_rx  = 0x30042000 / 0x1800
+.eth_dma_tx  = 0x30044000 / 0x1800
 ```
 
 MPU 当前配置：
@@ -116,20 +119,66 @@ Region 2: 0x30040000 / 256 B
 
 CPU I-Cache / D-Cache 当前均为 Disabled。
 
-### 数据路径
+### Polling 数据路径
 
-- [ ] MAC Speed / Duplex 与 PHY 状态同步；
-- [ ] TX Frame；
-- [ ] RX Frame；
+- [x] MAC Speed / Duplex 与 PHY 状态同步；
+- [x] `HAL_ETH_Start()`；
+- [x] 裸 TX Frame；
+- [x] 裸 RX Frame；
+- [x] RX Buffer 连续 recycle；
 - [ ] ETH IRQ；
-- [ ] FreeRTOS RX/TX 异步推进；
+- [ ] FreeRTOS RX 异步推进；
+- [ ] FreeRTOS TX 异步 completion；
 - [ ] RX/TX 错误统计；
+- [ ] 完整 Link Down / Up MAC lifecycle；
 - [ ] 长时间 DMA；
 - [ ] 高负载下无内存破坏。
 
-### 退出条件
+### 裸 Frame 上板记录
 
-MAC/DMA 数据路径稳定，Descriptor / Buffer 地址、MPU / Cache 和 Buffer ownership 均有明确证据，并完成裸 Frame RX/TX 上板验证。
+测试固件基线：`e50bf6a4ce9c3763e6b863b5982522b4e60ac197`。
+
+TX：
+
+```text
+STM32 Source MAC : 00:80:E1:00:00:00
+Destination      : FF:FF:FF:FF:FF:FF
+EtherType        : 0x88B5
+Frame Length     : 60 B
+Payload          : STM32H7 raw Ethernet TX
+```
+
+PC 使用 `tcpdump` 实际抓到该 Frame，裸 TX 为 On-board Verified。
+
+RX：
+
+```text
+PC → STM32
+EtherType    : 0x88B5
+Frame Length : 60 B
+Payload      : PC -> STM32H7 raw Ethernet RX
+```
+
+已验证：
+
+- 单帧接收成功，Driver 返回长度 60 B；
+- PC 约每 5 ms 发送一帧；
+- STM32 连续接收 `1000 / 1000` 帧成功；
+- 未出现基础 RX Buffer Pool 耗尽。
+
+该 1000 帧测试用于确认 Descriptor / Buffer recycle，不作为吞吐、长时间或高负载压力测试结论。
+
+### 当前退出条件
+
+M2 完整退出前至少还需要：
+
+- ETH IRQ 工作；
+- FreeRTOS 异步 RX 路径工作；
+- 异步模式下 ownership 清晰；
+- 关键错误 / drop 可观测；
+- 裸 Frame RX/TX 在异步路径下保持正确。
+
+polling MAC/DMA 基线已经建立并完成上板验证，但 M2 尚未退出。
 
 ## M3：LwIP + Ping
 
