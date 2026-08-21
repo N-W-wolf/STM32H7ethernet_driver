@@ -1,64 +1,54 @@
 # Latest Handoff
 
-- 来源工作单元：M1 PHY Bring-up
-- 日期：2026-08-20
-- 当前阶段：M1 核心功能完成，下一工作单元为 M2 MAC / DMA
+- 来源工作单元：M2 DMA 内存基础 + 文档约定整理
+- 日期：2026-08-21
+- 当前阶段：M2 MAC / DMA
 
 ## 1. 本次完成内容
 
-M1 已完成 LAN8720AI PHY 基础 Bring-up：
+### Ethernet DMA 内存基础
 
-- PHY Reset；
-- HAL ETH MDIO/MDC Management 访问；
-- MDIO Read / Write；
-- PHY ID；
-- PHY Address；
-- Strap MODE；
-- Auto-negotiation；
-- Link；
-- Speed；
-- Duplex；
-- Link Up / Down 动态检测。
+已完成：
 
-实测：
+- STM32H743 Ethernet DMA 可访问 SRAM 核对；
+- SRAM3 独立为 `RAM_ETH`；
+- RX / TX Descriptor 固定地址；
+- Descriptor linker ASSERT；
+- Cortex-M7 MPU 配置；
+- SRAM3 时钟准备；
+- Descriptor Build / map 地址验证。
+
+当前地址：
 
 ```text
-PHY ID1     = 0x0007
-PHY ID2     = 0xC0F1
-Reg18       = 0x60E0
-PHY Address = 0
-MODE        = 111
-Link        = Up / Down
-Speed       = 100M
-Duplex      = Full
+RAM_D2       = 0x30000000 / 256 KiB
+RAM_ETH      = 0x30040000 / 32 KiB
+DMARxDscrTab = 0x30040000
+DMATxDscrTab = 0x30040080
+RX section   = 96 B
+TX section   = 96 B
 ```
 
-网线拔出后可检测 Link Down；重新插入后可恢复 Link Up。
-
-## 2. 本次修改 / 新增代码
-
-M1 相关手工维护文件：
+MPU：
 
 ```text
-BSP/stm32h743vit6_iot/board_ethernet.c
-BSP/stm32h743vit6_iot/board_ethernet.h
-Drivers/Ethernet/Inc/ethernet_mdio.h
-Drivers/Ethernet/Src/ethernet_mdio.c
-Drivers/Ethernet/Inc/lan8720.h
-Drivers/Ethernet/Src/lan8720.c
-Core/Src/freertos.c                 # 仅 USER CODE 区域加入 Bring-up / Link polling
-CMakeLists.txt                      # 引入 BSP / Ethernet 驱动源文件
+Region 1
+0x30040000 / 32 KiB
+Normal, Non-cacheable, Non-bufferable, Shareable, XN
+
+Region 2
+0x30040000 / 256 B
+Device, Non-cacheable, Bufferable, Non-shareable, XN
 ```
 
-CubeMX 生成的 ETH 基础初始化仍由 `.ioc` 与 `Core/Src/eth.c` 等生成文件管理。
+当前 CPU I-Cache / D-Cache 均为 Disabled。
 
-## 3. 当前接口与职责边界
+### 板级 DMA SRAM 准备
 
-### Board Ethernet BSP
+新增接口：
 
 ```text
-BoardEthernet_PhyResetAssert()
-BoardEthernet_PhyResetRelease()
+BoardEthernet_PrepareDmaMemory()
 ```
 
 位置：
@@ -67,7 +57,44 @@ BoardEthernet_PhyResetRelease()
 BSP/stm32h743vit6_iot/board_ethernet.c/.h
 ```
 
-职责仅限当前板级 PHY Reset GPIO 控制。
+当前实现使能：
+
+```c
+__HAL_RCC_D2SRAM3_CLK_ENABLE();
+```
+
+调用位置：
+
+```text
+Core/Src/main.c
+USER CODE BEGIN SysInit
+```
+
+调用发生在 `MX_ETH_Init()` 之前。
+
+### 文档与板级迁移约定
+
+已确定：
+
+- README 和技术参考文档采用产品 / 使用者视角；
+- 公开技术文档不展示内部 M0/M1/M2 等开发阶段；
+- `00_PROJECT.md`、`05_TEST_PLAN.md`、`06_DECISIONS.md`、`07_STATUS.md`、`08_HANDOFF.md` 继续承担项目控制和规划；
+- `01_ARCHITECTURE.md` 成为唯一架构技术文档；
+- 删除与其重复的《STM32H7 Ethernet 通用驱动开发指导与规划》；
+- `03_MEMORY_DMA.md` 改为记录当前有效 DMA / MPU / linker 方案；
+- 新增 `docs/BOARD_PORTING.md`；
+- 板级 linker 采用显式配置，不使用 regex / 字符串 patch 脚本自动修改；
+- 自动化优先用于 map / ELF / alignment / 越界验证。
+
+## 2. 当前代码接口
+
+### Board Ethernet BSP
+
+```text
+BoardEthernet_PhyResetAssert()
+BoardEthernet_PhyResetRelease()
+BoardEthernet_PrepareDmaMemory()
+```
 
 ### MDIO Wrapper
 
@@ -75,15 +102,6 @@ BSP/stm32h743vit6_iot/board_ethernet.c/.h
 EthernetMdio_Read()
 EthernetMdio_Write()
 ```
-
-位置：
-
-```text
-Drivers/Ethernet/Inc/ethernet_mdio.h
-Drivers/Ethernet/Src/ethernet_mdio.c
-```
-
-职责：封装当前 HAL 1.11.6 的 PHY Management Read / Write，并做基本地址检查。
 
 ### LAN8720 PHY Driver
 
@@ -93,144 +111,135 @@ Lan8720_RestartAutoNegotiation()
 Lan8720_GetStatus()
 ```
 
-位置：
+## 3. 当前文件所有权
+
+CubeMX / ST 管理：
 
 ```text
-Drivers/Ethernet/Inc/lan8720.h
-Drivers/Ethernet/Src/lan8720.c
+stm32H7ethernet_demo.ioc
+Core/**
+Drivers/CMSIS/**
+Drivers/STM32H7xx_HAL_Driver/**
+cmake/stm32cubemx/CMakeLists.txt
+CubeMX 生成的 Third_Party middleware
 ```
 
-当前 PHY Driver：
+`Core/**` 的长期手工代码只允许写入 USER CODE 区域。
 
-- 只通过 `ethernet_mdio` 访问 PHY；
-- 不直接依赖 FreeRTOS；
-- 不依赖 LwIP；
-- `Lan8720_GetStatus()` 返回 Link、Auto-negotiation、Speed、Duplex；
-- BMSR Link Status 按 latch-low 规则连续读取两次；
-- PHY Link Down 后不再要求读取 Reg31 才能返回 Link 状态；
-- 对 `0xFFFF` 无响应值进行过滤，避免误判 Link 状态。
-
-### BootstrapTask
-
-位置：
+项目维护：
 
 ```text
-Core/Src/freertos.c
-StartBootstrapTask()
+BSP/**
+Drivers/Ethernet/**
+Middlewares/Network/**
+App/**
+docs/**
+顶层 CMakeLists.txt
+项目脚本
+STM32H743xx_FLASH.ld 中的 Ethernet DMA 配置
 ```
 
-当前仅作为 Bring-up 验证载体，负责：
-
-```text
-等待上电稳定
-→ 释放 PHY Reset
-→ PHY ID polling + timeout
-→ Restart Auto-negotiation
-→ 等待 Link / AN 完成
-→ 打印 Speed / Duplex
-→ 周期轮询 Link 状态
-```
-
-当前 Link polling 周期 200 ms 只作为 M1 验证参数，不代表未来网络任务最终周期或架构。
+当前项目不使用 CubeMX MMT 自动生成 Ethernet DMA linker section。
 
 ## 4. 已执行测试与结果
 
 ### Static Review
 
-- [x] BSP / MDIO / PHY 分层符合当前项目架构；
-- [x] PHY Driver 不依赖 FreeRTOS / LwIP；
-- [x] 当前 HAL ETH PHY Management API 已按仓库 HAL 1.11.6 核对；
-- [x] BMSR latch-low 行为按 Datasheet 处理；
-- [x] Reg31 HCDSPEED 映射按 LAN8720 Datasheet 处理。
+- [x] STM32H743 Ethernet DMA 不使用 DTCM；
+- [x] SRAM3 可作为 Ethernet DMA 内存；
+- [x] Descriptor / Buffer 需要显式 linker 管理；
+- [x] MPU 两层覆盖属性检查；
+- [x] SRAM3 clock 在 Ethernet 初始化前使能；
+- [x] BSP / linker / `.ioc` 的职责边界明确。
 
-### Build Verified
+### Build / Map Verified
 
-- [x] 当前 M1 固件已完成编译、烧录并上板运行。
-
-未单独记录 Debug / Release 两套 `--fresh` 可重复构建，因此 `05_TEST_PLAN.md` 中 M0 的“工程可重复编译”仍保留待补。
+- [x] `RAM_D2 = 256 KiB`；
+- [x] `RAM_ETH = 32 KiB`；
+- [x] `DMARxDscrTab = 0x30040000`；
+- [x] `DMATxDscrTab = 0x30040080`；
+- [x] RX / TX Descriptor section = 96 B；
+- [x] linker 地址 / 大小 / 非空 ASSERT 通过。
 
 ### On-board Verified
 
-- [x] PHY Reset；
-- [x] MDIO Read；
-- [x] MDIO Write；
-- [x] PHY ID；
-- [x] PHY Address = 0；
-- [x] MODE = 111；
-- [x] Auto-negotiation；
-- [x] Link Up；
-- [x] Link Down；
-- [x] 100 Mbit/s；
-- [x] Full Duplex；
-- [x] 单次网线拔出 / 插回恢复。
+本工作单元没有完成 Ethernet DMA Frame 数据路径上板验证。
+
+PHY 既有上板结果仍有效：
+
+```text
+PHY ID1     = 0x0007
+PHY ID2     = 0xC0F1
+PHY Address = 0
+MODE        = 111
+Link        = Up / Down
+Speed       = 100M
+Duplex      = Full
+```
 
 ### Measured
 
-当前没有独立示波器 / 逻辑分析仪测量结果。
+没有新增示波器 / 逻辑分析仪测量结果。
 
-尤其不要把以下内容写成 Measured：
+## 5. 当前尚未解决
 
-```text
-25 MHz PHY crystal
-PA1 / RMII_REF_CLK ≈ 50 MHz
-```
+M2 关键未完成项：
 
-这两项当前由原理图、Datasheet 和功能验证支持，但尚未独立测量。
+- RX Buffer Pool；
+- TX Buffer Pool；
+- HAL RX Allocate / Link callback ownership；
+- TX completion ownership；
+- Buffer linker section / 地址；
+- MAC Speed / Duplex 与 PHY 状态同步；
+- 裸 Ethernet Frame TX；
+- 裸 Ethernet Frame RX；
+- ETH IRQ；
+- FreeRTOS 异步收发；
+- DMA 错误统计；
+- DMA Frame 数据路径上板验证；
+- 长时间 / 高负载稳定性。
 
-## 5. M1 尚未完成的补充测试
+RX/TX Buffer 数量和最终地址当前不得自行假定。
 
-以下不阻塞进入 M2，但仍可在后续回归测试中补充：
+## 6. 新的 Accepted 决策
 
-- [ ] 10 Mbit/s 实际链路；
-- [ ] Half Duplex 实际链路；
-- [ ] 连续多次插拔网线；
-- [ ] 多次 STM32 重启；
-- [ ] 多次 PHY Reset；
-- [ ] 25 MHz 晶振独立测量；
-- [ ] PA1 / RMII_REF_CLK 独立测量；
-- [ ] Link / Speed LED 行为专项验证。
+`06_DECISIONS.md` 新增 / 更新：
 
-## 6. 本次设计决定
+- D007：原 DMA / Cache 倾向方案标记为 Superseded；
+- D015：文档受众与阶段信息边界；
+- D016：STM32H743 Ethernet DMA SRAM3 / Descriptor / MPU 基础方案；
+- D017：板级 linker 与自动化策略；
+- D018：CubeMX Memory Management Tool 边界。
 
-`06_DECISIONS.md` 已更新：
+## 7. 下一工作单元开始时优先读取
 
-- D008：PHY Link 检测由 Proposed 转为 Accepted，第一版采用周期轮询；
-- D014：PHY Driver 与 RTOS 边界，Accepted。
-
-D008 不冻结最终 200 ms 周期，也不冻结最终 Link 管理任务位置。
-
-## 7. 下一工作单元开始时必须读取
-
-1. `00_PROJECT.md`
-2. `01_ARCHITECTURE.md`
-3. `02_HARDWARE_BASELINE.md`
-4. `03_MEMORY_DMA.md`
-5. `05_TEST_PLAN.md`
-6. `06_DECISIONS.md`
-7. `07_STATUS.md`
-8. 本文件
-9. 当前 `Core/Src/eth.c` / `Core/Inc/eth.h`
-10. 当前 HAL 1.11.6 Ethernet 源码
-11. `stm32H7ethernet_demo.ioc`
-12. STM32H743 Datasheet / Reference Manual 中 Ethernet DMA、SRAM、Cache / MPU 相关章节
+1. `00_PROJECT.md`；
+2. `01_ARCHITECTURE.md`；
+3. `02_HARDWARE_BASELINE.md`；
+4. `03_MEMORY_DMA.md`；
+5. `05_TEST_PLAN.md`；
+6. `06_DECISIONS.md`；
+7. `07_STATUS.md`；
+8. 本文件；
+9. `Core/Src/eth.c` / `Core/Inc/eth.h`；
+10. 当前 HAL 1.11.6 Ethernet 源码；
+11. `STM32H743xx_FLASH.ld`；
+12. `stm32H7ethernet_demo.ioc`。
 
 ## 8. 下一工作单元推荐边界
 
-下一工作单元进入 **M2：STM32H743 MAC / DMA**。
+继续 M2：RX/TX Buffer Pool 与 HAL ownership。
 
-优先按以下顺序推进：
+优先：
 
-1. 核对 STM32H743 Ethernet DMA Master 可访问内存；
-2. 读取当前 CubeMX 生成的 Descriptor / Buffer 配置；
-3. 核对当前 HAL 1.11.6 ETH Descriptor / Buffer API；
-4. 冻结第一版 Descriptor / Buffer SRAM 放置方案；
-5. 明确 linker section、实际地址与 map 验证方法；
-6. 确定 MPU / D-Cache 一致性方案；
-7. 建立最小裸 Ethernet Frame TX；
-8. 建立最小裸 Ethernet Frame RX；
-9. 再处理 ETH IRQ 与 FreeRTOS 异步推进。
+1. 精确核对 `HAL_ETH_Start()`、`HAL_ETH_ReadData()`、`ETH_UpdateDescriptor()`、RX Allocate / Link callback；
+2. 确定 RX Descriptor 数量与静态 RX Buffer 数量关系；
+3. 确定 TX Buffer ownership；
+4. 定义 Buffer section；
+5. 放入 `RAM_ETH` 并 Build / map 验证；
+6. 再建立最小裸 Ethernet Frame TX / RX。
 
-M2 不进入：
+范围外：
 
 - LwIP；
 - Ping；

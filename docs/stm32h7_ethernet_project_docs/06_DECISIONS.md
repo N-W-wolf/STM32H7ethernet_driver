@@ -20,7 +20,7 @@
 
 决定：
 
-第一版 Bring-up 使用：
+第一验证平台使用：
 
 ```text
 STM32H743VIT6
@@ -39,7 +39,7 @@ RMII
 - 状态：Accepted
 - 日期：2026-08-20
 
-第一版采用：
+采用：
 
 ```text
 STM32 HAL
@@ -100,7 +100,7 @@ BSP / Board Port
 - 状态：Accepted
 - 日期：2026-08-20
 
-第一版验证：
+基础验证范围：
 
 ```text
 Static IPv4
@@ -136,10 +136,11 @@ HTTP
 
 ## D007 DMA / Cache 第一版方案
 
-- 状态：Proposed
+- 状态：Superseded
 - 日期：2026-08-20
+- 替代：D016
 
-当前倾向：
+原倾向：
 
 ```text
 专用 .eth_dma 区域
@@ -149,9 +150,7 @@ HTTP
 优先选择易验证的一致性方案
 ```
 
-是否最终全部使用 Non-cacheable，需要在 M2 根据 STM32H743 内存映射、HAL 数据结构和性能测试确认。
-
-在确认前，任何模块不得假定最终 Cache 策略已经冻结。
+该决定已由 D016 的 STM32H743 当前板实际 SRAM3 / MPU / linker 方案替代。
 
 ---
 
@@ -160,11 +159,11 @@ HTTP
 - 状态：Accepted
 - 日期：2026-08-20
 
-第一版采用周期轮询 PHY Link。
+采用周期轮询 PHY Link。
 
 暂不依赖 LAN8720 nINT。
 
-M1 Bring-up 中使用 200 ms polling 进行上板验证，但该周期以及最终承载 Link 管理的任务不作为长期固定参数。
+Bring-up 中使用 200 ms polling 进行上板验证，但该周期以及最终承载 Link 管理的任务不作为长期固定参数。
 
 进入 LwIP / `ethernetif` 后，应结合实际网络任务模型重新确定轮询位置和周期。
 
@@ -175,15 +174,15 @@ M1 Bring-up 中使用 200 ms polling 进行上板验证，但该周期以及最�
 - 状态：Proposed
 - 日期：2026-08-20
 
-用于 Echo/Bring-up 的应用 API 暂未冻结。
+用于 Echo / Bring-up 的应用 API 暂未冻结。
 
 候选：
 
-- Socket API：调试直观；
+- Socket API；
 - Netconn API；
-- Raw API：开销低，但线程模型要求更严格。
+- Raw API。
 
-在 M3 前确定。
+在 LwIP Runtime 设计确定时再冻结。
 
 ---
 
@@ -206,12 +205,12 @@ M1 Bring-up 中使用 200 ms polling 进行上板验证，但该周期以及最�
 
 ---
 
-## D011 M0 FreeRTOS 与 HAL 时间基线
+## D011 FreeRTOS 与 HAL 时间基线
 
 - 状态：Accepted
 - 日期：2026-08-20
 
-M0 工程使用 FreeRTOS，并由 CubeMX 以 CMSIS-RTOS v2 接口生成基础任务框架。
+工程使用 FreeRTOS，并由 CubeMX 以 CMSIS-RTOS v2 接口生成基础任务框架。
 
 时间基线采用：
 
@@ -220,18 +219,18 @@ TIM6    → HAL 1 ms Tick / HAL timeout
 SysTick → FreeRTOS Kernel Tick
 ```
 
-后续 Ethernet ISR 如需调用 FreeRTOS FromISR API，必须基于实际 `FreeRTOSConfig.h` 和 NVIC 配置重新核对中断优先级约束。
+Ethernet ISR 如需调用 FreeRTOS FromISR API，必须基于实际 `FreeRTOSConfig.h` 和 NVIC 配置核对中断优先级约束。
 
-本决定不冻结未来 Ethernet Task、`tcpip_thread` 或 ETH IRQ 的优先级。
+本决定不冻结 Ethernet Task、`tcpip_thread` 或 ETH IRQ 的最终优先级。
 
 ---
 
-## D012 M0 基础调试输出
+## D012 基础调试输出
 
 - 状态：Accepted
 - 日期：2026-08-20
 
-第一验证板的 M0 基础调试输出使用：
+当前验证板基础调试输出使用：
 
 ```text
 USART1
@@ -273,11 +272,13 @@ BSP/**
 Drivers/Ethernet/**
 Middlewares/Network/**
 App/**
-docs/stm32h7_ethernet_project_docs/**
+docs/**
 顶层 CMakeLists.txt 与项目脚本
 ```
 
-不为了占位而提前创建 M1/M2/M3 的空源文件；实际进入对应模块时再建立文件和接口。
+Ethernet DMA linker 配置的特殊所有权见 D017。
+
+不为了占位提前创建空源文件；实际需要时再建立文件和接口。
 
 ---
 
@@ -298,6 +299,145 @@ Lan8720_GetStatus()
 
 Reset 后的等待、轮询周期和 timeout 由调用层负责。
 
-PHY ready 不依赖固定延时判断，而通过 PHY ID polling + timeout 确认。
+PHY ready 通过 PHY ID polling + timeout 确认。
 
 对 MDIO 返回的 `0xFFFF` 不作为有效 PHY 状态解释，避免将 PHY 无响应错误判断为有效 Link 状态。
+
+---
+
+## D015 文档受众与阶段信息边界
+
+- 状态：Accepted
+- 日期：2026-08-21
+
+项目文档分为两类。
+
+面向使用者 / 技术阅读者：
+
+```text
+README.md
+01_ARCHITECTURE.md
+02_HARDWARE_BASELINE.md
+03_MEMORY_DMA.md
+04_RTOS_NETWORK.md
+docs/BOARD_PORTING.md
+```
+
+这些文档：
+
+- 不展示 M0/M1/M2 等内部开发阶段；
+- 不使用“当前阶段”“下一阶段”“工作单元”等项目推进语义；
+- 只描述介绍、支持状态、硬件、架构、环境、使用方式、限制、技术设计和迁移；
+- 未实现能力直接标记“未实现”；
+- README 不作为开发日志。
+
+项目控制 / 规划文档：
+
+```text
+00_PROJECT.md
+05_TEST_PLAN.md
+06_DECISIONS.md
+07_STATUS.md
+08_HANDOFF.md
+```
+
+这些文档允许记录里程碑、当前阶段、工作单元、Accepted / Proposed 和测试计划。
+
+`01_ARCHITECTURE.md` 作为唯一架构技术文档，不再保留内容重复的《STM32H7 Ethernet 通用驱动开发指导与规划》。
+
+---
+
+## D016 STM32H743 Ethernet DMA 内存与 MPU
+
+- 状态：Accepted
+- 日期：2026-08-21
+
+当前 STM32H743VIT6 验证板将 SRAM3 专用于 Ethernet DMA：
+
+```text
+RAM_ETH
+0x30040000 ~ 0x30047FFF
+32 KiB
+```
+
+普通 D2 RAM 缩为：
+
+```text
+RAM_D2
+0x30000000 ~ 0x3003FFFF
+256 KiB
+```
+
+Descriptor：
+
+```text
+RX = 0x30040000
+TX = 0x30040080
+ETH_RX_DESC_CNT = 4
+ETH_TX_DESC_CNT = 4
+```
+
+当前 HAL `ETH_DMADescTypeDef` 为 24 B，因此每组 4 个 Descriptor 实际 96 B，各预留 128 B slot。
+
+MPU：
+
+```text
+Region 1
+0x30040000 / 32 KiB
+Normal, Non-cacheable, Non-bufferable, Shareable, XN
+
+Region 2
+0x30040000 / 256 B
+Device, Non-cacheable, Bufferable, Non-shareable, XN
+```
+
+Region 2 以更高编号覆盖 Descriptor 区。
+
+板级代码在 `MX_ETH_Init()` 前显式使能 D2 SRAM3 时钟。
+
+当前 CPU I-Cache / D-Cache 均为 Disabled。
+
+已完成 Build / map 验证：
+
+```text
+DMARxDscrTab = 0x30040000
+DMATxDscrTab = 0x30040080
+```
+
+本决定只冻结 DMA 专用 SRAM、Descriptor 地址、MPU 和 linker 基础边界；RX/TX Buffer 数量、最终 Buffer section / 地址和 ownership 仍未冻结。
+
+---
+
+## D017 板级 linker 与自动化策略
+
+- 状态：Accepted
+- 日期：2026-08-21
+
+当前根目录 `STM32H743xx_FLASH.ld` 已包含项目自定义 Ethernet DMA 内存布局，视为当前验证板的项目维护配置。
+
+CubeMX Generate Code 后必须检查 linker diff，避免自定义 `RAM_ETH`、Descriptor section 和 `ASSERT` 被覆盖。
+
+当前不使用脚本通过 regex / 字符串替换自动修改 `.ld`。
+
+自动化优先用于验证：
+
+- `.map` / ELF 地址；
+- Descriptor / Buffer alignment；
+- DMA region 越界；
+- section 非空；
+- CI 检查。
+
+只有出现实际多板维护需求时，再评估 board-specific linker 选择或结构化配置 + template 生成。
+
+---
+
+## D018 Ethernet Memory Management Tool 边界
+
+- 状态：Accepted
+- 日期：2026-08-21
+
+当前项目不使用 CubeMX Memory Management Tool 自动管理 Ethernet DMA linker section。
+
+`.ioc` 负责保存 ETH Descriptor 地址和 Cortex-M7 MPU Region；项目 linker 负责物理 DMA SRAM 与 section；BSP 负责当前板 DMA SRAM 的时钟准备。
+
+理由：当前 CubeMX 6.18.1 实际试验中，MMT 对 Descriptor / RX Pool region 的生成表达与静态 Buffer Pool 设计不匹配，并出现 linker 配置源不一致风险。

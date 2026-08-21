@@ -1,30 +1,27 @@
 # Hardware Baseline
 
-- 状态：Active
-- 用途：记录当前第一验证板的硬件事实
-- 原则：只写已经由当前有效原理图、Datasheet 或实测确认的信息；推断必须显式标记。
+本文记录当前验证板的 Ethernet 相关硬件事实。只写由有效原理图、器件 Datasheet、Reference Manual、当前源码或实测支持的信息；推断和未独立测量项必须明确标注。
 
-## 1. 第一验证平台
+## 1. 验证平台
 
-| 项目 | 当前值 | 可信度 |
-|---|---|---|
-| MCU | STM32H743VIT6 | 已由当前有效原理图确认 |
-| PHY | LAN8720AI-CP-TR 系列 | 已由当前有效原理图确认 |
-| MAC-PHY 接口 | RMII | 已由原理图与信号连接确认 |
-| PHY 供电 | 3.3 V 系统 | 已由原理图确认 |
-| PHY 本地时钟源 | 25 MHz 晶振 | 已由原理图确认 |
+| 项目 | 当前值 | 依据 |
+| --- | --- | --- |
+| MCU | STM32H743VIT6 | 当前有效原理图 |
+| 封装 | LQFP100 | MCU 型号 / 原理图 |
+| PHY | LAN8720AI | 当前有效原理图 |
+| MAC-PHY 接口 | RMII | 原理图与引脚连接 |
+| PHY 供电 | 3.3 V 系统 | 原理图 |
+| PHY 本地时钟源 | 25 MHz 晶振 | 原理图 |
 | 网络速率能力 | 10/100 Mbit/s | LAN8720A Datasheet |
-| RTOS | FreeRTOS | 项目设计决定 |
-| TCP/IP 栈 | LwIP | 项目设计决定 |
+| RTOS | FreeRTOS / CMSIS-RTOS v2 | 当前工程 |
+| TCP/IP 栈 | LwIP | 项目软件环境，当前未接入 |
 
-STM32H743 本身提供 Ethernet MAC 和专用 DMA，外接 PHY 通过 RMII 与 MAC 通信。
+STM32H743 内部提供 Ethernet MAC 和 DMA，外接 LAN8720AI 负责物理层收发。
 
 ## 2. RMII / SMI 引脚
 
-根据当前有效 STM32H743VIT6 原理图：
-
 | STM32H743 引脚 | 网络信号 | 方向（相对 MCU） |
-|---|---|---|
+| --- | --- | --- |
 | PA1 | RMII_REF_CLK | 输入 |
 | PA2 | ETH_MDIO | 双向 |
 | PC1 | ETH_MDC | 输出 |
@@ -36,11 +33,11 @@ STM32H743 本身提供 Ethernet MAC 和专用 DMA，外接 PHY 通过 RMII 与 M
 | PB13 | RMII_TXD1 | 输出 |
 | PC0 | ETH_RESET / PHY nRST | 输出 |
 
-PHY 的 `nINT/REFCLKO` 与 MCU `PA1_RMII_REF_CLK` 相连。
+PHY 的 `nINT/REFCLKO` 与 MCU `PA1 / RMII_REF_CLK` 相连。
 
 ## 3. PHY 时钟拓扑
 
-当前原理图显示：
+原理图和 LAN8720A Datasheet 支持以下连接：
 
 ```text
 25 MHz Crystal
@@ -54,21 +51,23 @@ nINT / REFCLKO
 STM32H743 PA1 / RMII_REF_CLK
 ```
 
-LAN8720A Datasheet 明确支持使用 25 MHz 晶振并向 MAC 输出 50 MHz RMII `REF_CLK`。
-
-因此当前高可信判断是：
+已确认：
 
 - PHY 使用 25 MHz 晶振；
-- LAN8720AI 负责产生 RMII 50 MHz REF_CLK；
-- STM32H743 从 PA1 接收该时钟。
+- LAN8720AI 配置支持 REF_CLK Out Mode；
+- STM32H743 从 PA1 接收 RMII REF_CLK；
+- PHY Reset、MDIO、Auto-negotiation 和 Link 已可正常工作，从功能上支持该时钟路径有效。
 
-M1 已完成 PHY Reset、MDIO、Auto-negotiation 和 Link 上板验证，这从功能上支持当前 REF_CLK 路径能够工作的判断。
+未独立测量：
 
-但当前未使用示波器或逻辑分析仪独立测量 25 MHz 晶振及 PA1 / RMII_REF_CLK，因此不把“PA1 实测约 50 MHz”写成 Measured 事实。
+- 25 MHz PHY 晶振实际频率；
+- PA1 / RMII_REF_CLK 实际频率。
+
+因此不把“PA1 实测 50 MHz”描述为 Measured 结果。
 
 ## 4. PHY Reset
 
-当前原理图：
+连接：
 
 ```text
 STM32H743 PC0
@@ -78,30 +77,37 @@ PC0_ETH_RESET
 LAN8720AI nRST
 ```
 
-当前软件由 CubeMX 初始化阶段先将 `ETH_RESET` 拉低，再由 BSP 接口释放 PHY Reset。
+当前 BSP 接口：
 
-M1 已上板确认：
+```c
+void BoardEthernet_PhyResetAssert(void);
+void BoardEthernet_PhyResetRelease(void);
+```
+
+已上板确认：
 
 - PC0 可以控制 LAN8720AI nRST；
 - Reset 释放后可以通过 MDIO 读取正确 PHY ID；
-- 软件使用 PHY ID polling + timeout 判断 PHY 已进入可管理状态，而不是依赖固定释放后延时判断 ready。
+- 软件通过 PHY ID polling + timeout 判断 PHY 已进入可管理状态，不依赖固定长延时判断 ready。
 
 ## 5. MDIO / MDC
 
-当前原理图：
+连接：
 
 ```text
 STM32 PA2  ↔ LAN8720 MDIO
 STM32 PC1  → LAN8720 MDC
 ```
 
-当前第一版通过 STM32 Ethernet MAC/HAL PHY Management 接口访问 LAN8720 Clause 22 寄存器，不使用 GPIO bit-bang MDIO。
+当前工程通过 STM32 Ethernet MAC/HAL PHY Management 接口访问 LAN8720 Clause 22 寄存器，不使用 GPIO bit-bang MDIO。
 
-当前工程 HAL 为 STM32H7 HAL 1.11.6；M1 已完成 MDIO Read / Write 上板验证。
+当前 HAL Ethernet 组件版本为 STM32H7 HAL 1.11.6。
 
-## 6. PHY Strap
+MDIO Read / Write 已完成上板验证。
 
-M1 上板读取 LAN8720 Special Modes Register（Reg 18）得到：
+## 6. PHY ID / Address / Strap
+
+LAN8720 Special Modes Register（Reg 18）上板读取结果：
 
 ```text
 Reg18       = 0x60E0
@@ -109,7 +115,7 @@ MODE[2:0]   = 111
 PHYAD[4:0]  = 00000
 ```
 
-因此当前第一验证板已确认：
+已确认：
 
 ```text
 PHY Address : 0
@@ -126,14 +132,32 @@ PHY ID2 = 0xC0F1
 
 与 LAN8720 系列器件标识一致。
 
-结合当前有效原理图与 LAN8720A Datasheet：
+结合原理图和 Datasheet：
 
 - `nINTSEL` 外部 strap 为 Low，符合 REF_CLK Out Mode；
 - `REGOFF` 外部 strap 为 Low，符合内部 1.2 V regulator 启用模式。
 
-其中 PHY Address、MODE 和 PHY ID 已通过 MDIO 上板实测确认；`nINTSEL` / `REGOFF` 当前由原理图连接和 Datasheet 支持，尚未通过独立电气测量确认。
+PHY Address、MODE 和 PHY ID 已通过 MDIO 实测；`nINTSEL` / `REGOFF` 由原理图和 Datasheet 支持，尚未独立做电气测量。
 
-## 7. 物理网络接口
+## 7. Link / Speed / Duplex
+
+已上板验证：
+
+```text
+Link Up / Down 可检测
+100 Mbit/s 可读取
+Full Duplex 可读取
+单次网线拔出 / 插回可恢复 Link 状态
+```
+
+尚未完成专项验证：
+
+- 10 Mbit/s 实际链路；
+- Half Duplex 实际链路；
+- 连续多次快速插拔；
+- Link / Speed LED 行为。
+
+## 8. 物理网络接口
 
 当前原理图包含：
 
@@ -143,9 +167,7 @@ PHY ID2 = 0xC0F1
 - RJ45；
 - Link / Speed LED 相关连接。
 
-第一版软件驱动无需管理变压器和 RJ45。
-
-软件关注边界：
+软件边界：
 
 ```text
 STM32H743 MAC
@@ -157,11 +179,12 @@ Transformer
 RJ45
 ```
 
-## 8. M0 调试串口
+网络变压器和 RJ45 不需要由软件驱动管理。
 
-当前工程使用 USART1 作为基础调试输出：
+## 9. 调试串口
 
 ```text
+USART1
 PA9  = USART1_TX
 PA10 = USART1_RX
 115200 baud
@@ -171,68 +194,92 @@ No parity
 No hardware flow control
 ```
 
-该配置已完成上板验证，Linux 端可通过对应 USB 虚拟串口接收日志。
+该配置已上板验证。
 
-### PCB 丝印注意事项
+当前验证板 UART 相关 PCB 丝印与有效原理图中的 TX/RX 标识存在反向情况。接线应以 MCU 实际信号和有效原理图为依据。
 
-M0 实测发现：当前板卡 UART 相关 PCB 丝印与有效原理图中的 TX/RX 标识相反。
+## 10. Ethernet DMA 内存
 
-已验证的软件信号定义仍为：
+当前验证板使用 STM32H743 SRAM3 作为 Ethernet DMA 专用内存：
 
 ```text
-PA9  = USART1_TX
-PA10 = USART1_RX
+SRAM3 / RAM_ETH
+0x30040000 ~ 0x30047FFF
+32 KiB
 ```
 
-因此调试接线时应以 MCU 实际信号和当前有效原理图为依据，不依赖该处 PCB 丝印。该结论仅针对当前验证板，不外推到其他板卡。
+普通 D2 RAM 在 linker 中限制为：
 
-## 9. 内存 / DMA
+```text
+RAM_D2
+0x30000000 ~ 0x3003FFFF
+256 KiB
+```
 
-当前尚未冻结 Ethernet DMA 内存布局。
+已配置 Descriptor：
 
-已知项目约束：
+```text
+RX Descriptor  0x30040000
+TX Descriptor  0x30040080
+```
 
-- Ethernet DMA 使用的 Descriptor / Buffer 不得放入 DMA 无法访问的内存；
-- STM32H7 D-Cache 一致性必须显式处理；
-- 第一版倾向划分专用 `.eth_dma` 区域；
-- 第一版倾向优先采用简单、易验证的一致性方案。
+当前 4 个 Descriptor 的实际 section 大小均为 96 B，并已通过 linker / map 验证。
 
-最终 SRAM 区域、MPU 属性、Descriptor 地址和 Buffer 地址统一在 `03_MEMORY_DMA.md` 中确定。
+MPU：
 
-## 10. 当前硬件验证清单
+```text
+Region 1: 0x30040000 / 32 KiB
+          Normal, Non-cacheable, Non-bufferable, Shareable, XN
 
-M0 已确认：
+Region 2: 0x30040000 / 256 B
+          Device, Non-cacheable, Bufferable, Non-shareable, XN
+```
 
-- [x] USART1 PA9 TX / PA10 RX 配置可工作；
-- [x] 基础串口输出链路可工作；
-- [x] 记录当前 PCB UART 丝印与原理图标识冲突。
+Region 2 编号更高，覆盖 SRAM3 前 256 B 的 Descriptor 区域。
 
-M1 已确认：
+板级初始化在 `MX_ETH_Init()` 前调用 `BoardEthernet_PrepareDmaMemory()`，显式使能 D2 SRAM3 时钟。
 
-- [x] PC0 可正确控制 LAN8720AI nRST；
-- [x] MDIO 可以读 PHY ID；
-- [x] MDIO Write 可用；
-- [x] PHY Address 与 strap 一致；
-- [x] MODE strap 与读取寄存器一致；
-- [x] 插拔网线可以反映到 PHY Link 状态；
-- [x] 100 Mbit/s / Full Duplex 状态可以正确读取。
+当前 CPU I-Cache / D-Cache 均未启用。RX/TX 数据 Buffer Pool 尚未实现，因此 Buffer 实际地址和 ownership 仍未形成可验证数据路径。
 
-仍待独立或补充验证：
+详细设计见 `03_MEMORY_DMA.md`。
 
-- [ ] 25 MHz PHY 晶振独立测量；
-- [ ] PA1 / RMII_REF_CLK 独立测量；
-- [ ] Link / Speed LED 行为专项验证；
-- [ ] 10 Mbit/s 实际链路；
-- [ ] Half Duplex 实际链路。
+## 11. 验证状态汇总
 
-## 11. 资料基线
+### On-board Verified
 
-当前主要资料：
+- PHY Reset；
+- MDIO Read / Write；
+- PHY ID；
+- PHY Address = 0；
+- MODE = 111；
+- Auto-negotiation；
+- Link Up / Down；
+- 100 Mbit/s；
+- Full Duplex；
+- 单次网线拔出 / 插回恢复；
+- USART1 调试输出。
 
-- 《STM32H7 Ethernet 通用驱动开发指导与规划》
-- STM32H743 Datasheet
-- LAN8720A/LAN8720Ai Datasheet
-- 当前有效 STM32H743VIT6 开发板原理图
-- 当前仓库 STM32H7 HAL 1.11.6 Ethernet 源码
+### Build / Map Verified
 
-如后续加入 STM32H743 Reference Manual 或官方 Ethernet/LwIP 示例，应在这里补充版本信息。
+- SRAM3 从普通 `RAM_D2` 中独立为 `RAM_ETH`；
+- RX Descriptor = `0x30040000`；
+- TX Descriptor = `0x30040080`；
+- Descriptor linker size / non-empty 断言通过。
+
+### 尚未独立测量或功能验证
+
+- 25 MHz PHY 晶振频率；
+- PA1 / RMII_REF_CLK 频率；
+- Ethernet DMA 裸 Frame RX/TX；
+- RX/TX Buffer 数据路径；
+- Cache 开启后的数据路径。
+
+## 12. 资料依据
+
+主要依据：
+
+- 当前有效 STM32H743VIT6 开发板原理图；
+- STM32H743 Datasheet / Reference Manual；
+- LAN8720A/LAN8720Ai Datasheet；
+- 当前仓库 STM32H7 HAL 1.11.6 Ethernet 源码；
+- 当前仓库 `.ioc`、BSP、linker 和构建结果。

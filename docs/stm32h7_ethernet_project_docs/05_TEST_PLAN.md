@@ -22,7 +22,7 @@
 - USART1 使用 PA9 TX / PA10 RX，115200 8N1；
 - 调试中发现当前 PCB UART 丝印与有效原理图 TX/RX 标识相反，已记录到 `02_HARDWARE_BASELINE.md`。
 
-说明：M0 已经完成一次可编译、可烧录、可运行的固件验证；`工程可重复编译` 项保留未勾选，待后续明确执行并记录 Debug / Release fresh build 后再关闭。
+说明：M0 已完成一次可编译、可烧录、可运行的固件验证；`工程可重复编译` 项保留未勾选，待明确执行并记录 Debug / Release fresh build 后再关闭。
 
 ## M1：PHY Bring-up
 
@@ -41,7 +41,7 @@
 - [x] Full Duplex 状态；
 - [x] 单次网线拔出 / 插回恢复。
 
-M1 当前上板结果：
+M1 上板结果：
 
 ```text
 PHY ID1     = 0x0007
@@ -79,22 +79,57 @@ Duplex      = Full
 
 ## M2：MAC / DMA
 
-测试：
+### 内存与 Descriptor
 
-- [ ] Descriptor 地址；
-- [ ] Buffer 地址；
-- [ ] DMA 可访问性；
-- [ ] Cache / MPU 属性；
+- [x] Ethernet DMA 可访问 SRAM 选择 — Static Review，Reference Manual 支持 SRAM3；
+- [x] SRAM3 独立为 `RAM_ETH` — Build Verified；
+- [x] RX Descriptor 地址 `0x30040000` — Build / Map Verified；
+- [x] TX Descriptor 地址 `0x30040080` — Build / Map Verified；
+- [x] Descriptor section 非空 / slot 大小断言 — Build Verified；
+- [x] MPU Region 配置 — Static Review + Build Verified；
+- [x] SRAM3 时钟在 `MX_ETH_Init()` 前准备 — Static Review + Build Verified；
+- [ ] RX Buffer 地址；
+- [ ] TX Buffer 地址；
+- [ ] RX Buffer ownership；
+- [ ] TX Buffer ownership；
+- [ ] DMA 对 Buffer 的上板访问验证；
+- [ ] D-Cache 开启后的数据路径验证。
+
+当前 map 结果：
+
+```text
+DMARxDscrTab = 0x30040000
+DMATxDscrTab = 0x30040080
+Rx section   = 96 B
+Tx section   = 96 B
+```
+
+MPU 当前配置：
+
+```text
+Region 1: 0x30040000 / 32 KiB
+          Normal, Non-cacheable, Non-bufferable, Shareable, XN
+
+Region 2: 0x30040000 / 256 B
+          Device, Non-cacheable, Bufferable, Non-shareable, XN
+```
+
+CPU I-Cache / D-Cache 当前均为 Disabled。
+
+### 数据路径
+
+- [ ] MAC Speed / Duplex 与 PHY 状态同步；
 - [ ] TX Frame；
 - [ ] RX Frame；
-- [ ] IRQ；
+- [ ] ETH IRQ；
+- [ ] FreeRTOS RX/TX 异步推进；
 - [ ] RX/TX 错误统计；
 - [ ] 长时间 DMA；
 - [ ] 高负载下无内存破坏。
 
-退出条件：
+### 退出条件
 
-MAC/DMA 数据路径稳定，地址、Cache 和 Buffer ownership 均有明确证据。
+MAC/DMA 数据路径稳定，Descriptor / Buffer 地址、MPU / Cache 和 Buffer ownership 均有明确证据，并完成裸 Frame RX/TX 上板验证。
 
 ## M3：LwIP + Ping
 
@@ -170,4 +205,5 @@ MAC/DMA 数据路径稳定，地址、Cache 和 Buffer ownership 均有明确证
 - 实际结果；
 - 错误计数；
 - 是否通过；
+- 验证等级：Static Review / Build Verified / On-board Verified / Measured；
 - 必要的示波器/逻辑分析仪测量。

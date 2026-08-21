@@ -1,6 +1,6 @@
 # STM32H7 Ethernet 通用驱动项目
 
-- 状态：Active / M1 Ready
+- 状态：Active / M2 进行中
 - 第一验证平台：STM32H743VIT6
 - 第一验证 PHY：LAN8720AI
 - 接口：RMII
@@ -10,40 +10,24 @@
 
 开发一套面向 STM32H7 的可复用 Ethernet 基础组件。
 
-第一版以 STM32H743VIT6 + LAN8720AI 为验证平台，完成从 PHY、MAC/DMA、FreeRTOS 异步收发到 LwIP 的完整基础链路，使 STM32 能够稳定与 PC/Linux 上位机进行网络通信。
+第一验证平台使用 STM32H743VIT6 + LAN8720AI，目标覆盖：
 
-第一版目标包括：
-
-- LAN8720AI PHY 初始化与管理；
-- MDIO/MDC 读写；
-- PHY ID、Link、Speed、Duplex 获取；
-- STM32H7 Ethernet MAC 初始化；
-- Ethernet DMA Descriptor 与 Buffer 管理；
-- STM32H7 MPU / D-Cache / DMA 内存一致性处理；
-- FreeRTOS 下异步 Ethernet RX/TX；
-- LwIP `ethernetif` 适配；
-- 静态 IPv4；
+- PHY Reset、MDIO/MDC、Link / Speed / Duplex；
+- STM32H7 Ethernet MAC / DMA；
+- Descriptor / Buffer ownership；
+- MPU / Cache / linker；
+- FreeRTOS 异步 RX/TX；
+- LwIP `ethernetif`；
+- Static IPv4；
 - ICMP Ping；
 - UDP Echo；
 - TCP Echo；
 - 错误统计、链路恢复和压力测试；
-- 将板级差异、PHY 差异和通用驱动逻辑分离。
+- 板级差异、PHY 差异与通用驱动逻辑分离。
 
-## 2. 当前不做
+机器人 HostLink、CommandFrame、StateFrame、控制业务和安全状态机不属于 Ethernet 基础组件。
 
-第一版暂不处理：
-
-- 机器人 HostLink；
-- CommandFrame / StateFrame；
-- 机器人控制和安全状态机；
-- DHCP、DNS、mDNS、TLS、HTTP 等扩展网络服务；
-- 为未来可能存在的网络后端提前建立复杂统一接口；
-- Zero Copy 极致优化；
-- 与当前任务无关的 STM32 外设驱动。
-
-机器人系统以后作为该 Ethernet 基础组件的上层用户接入。
-
-## 3. 稳定的软件分层
+## 2. 稳定软件分层
 
 ```text
 Application
@@ -55,73 +39,82 @@ ethernetif
 Ethernet Driver
     ├── STM32H7 MAC / DMA
     └── PHY abstraction
-            ↓
-         PHY Driver
+             ↓
+          PHY Driver
     ↓
 BSP / Board Port
     ↓
 STM32 HAL / Hardware
 ```
 
-基本依赖约束：
+约束：
 
 - Application 不直接操作 `HAL_ETH_xxx()`；
-- LwIP 不进入 Ethernet Driver 内部；
-- Ethernet Driver 不处理 UDP/TCP/IP 业务；
+- Ethernet Driver 不处理 UDP/TCP/IP 或机器人业务；
 - PHY Driver 不依赖 LwIP；
 - BSP 只承担板级差异；
-- 板级引脚、Reset、时钟连接等信息不能散落在通用驱动中。
+- DMA / MPU / linker 必须显式设计；
+- 不为尚未出现的需求建立复杂抽象。
 
-详细设计以 `01_ARCHITECTURE.md` 为准。
+详细架构以 `01_ARCHITECTURE.md` 为准。
 
-## 4. 开发里程碑
+## 3. 开发里程碑
 
 ### M0：项目基线
 
-状态：已完成运行基线，Debug / Release fresh build 的重复构建记录待补。
+核心内容已完成：
 
-已完成：
-
-- 项目文档与硬件基线；
-- 实际代码仓库结构；
-- CubeMX 生成代码与手工代码边界；
-- FreeRTOS / CMSIS-RTOS v2 最小工程；
-- TIM6 HAL Timebase；
+- 工程目录与文档；
+- CubeMX / CMake 基础工程；
+- FreeRTOS / CMSIS-RTOS v2；
+- TIM6 HAL Tick；
 - BootstrapTask；
-- LED 心跳；
-- USART1 基础调试输出；
-- BSP 调试重定向；
-- 上板运行验证。
+- USART1 调试输出；
+- 基础上板运行。
+
+Debug / Release fresh build 的正式重复记录仍可补充。
 
 ### M1：PHY Bring-up
 
-完成：
+核心内容已完成并上板验证：
 
 - PHY Reset；
-- MDIO/MDC；
-- PHY ID；
-- PHY 初始化；
+- MDIO Read / Write；
+- PHY ID / Address / Strap；
 - Auto-negotiation；
-- Link；
-- Speed；
-- Duplex。
+- Link Up / Down；
+- 100 Mbit/s；
+- Full Duplex；
+- 单次网线拔插恢复。
+
+10 Mbit/s、Half Duplex、连续插拔和时钟独立测量仍属于补充测试。
 
 ### M2：MAC / DMA
 
-完成：
+已完成：
 
-- MAC；
-- Descriptor；
-- RX/TX Buffer；
-- IRQ；
-- DMA；
-- MPU；
-- Cache；
-- 基础 Frame RX/TX。
+- STM32H743 Ethernet DMA 可达内存核对；
+- SRAM3 独立为 `RAM_ETH`；
+- RX/TX Descriptor 固定地址；
+- Descriptor linker ASSERT；
+- MPU Normal Non-cacheable + Device overlay；
+- SRAM3 时钟准备；
+- Descriptor Build / map 地址验证。
+
+未完成：
+
+- RX/TX Buffer Pool；
+- Buffer ownership；
+- MAC Speed / Duplex 同步；
+- 裸 Frame TX / RX；
+- ETH IRQ；
+- FreeRTOS 异步收发；
+- DMA 数据路径上板验证；
+- 压力测试。
 
 ### M3：LwIP + IP
 
-完成：
+未开始：
 
 - `ethernetif`；
 - LwIP；
@@ -131,101 +124,182 @@ STM32 HAL / Hardware
 
 ### M4：UDP
 
-完成：
-
-- UDP Echo；
-- 高频通信；
-- 统计；
-- Link 恢复。
+未开始。
 
 ### M5：TCP
 
-完成：
-
-- TCP Echo；
-- Connect / Disconnect；
-- 异常恢复。
+未开始。
 
 ### M6：通用化与验收
 
-完成：
+未开始。
 
-- Driver API 整理；
-- Board Port 整理；
-- PHY 抽象复核；
-- 压力测试；
-- 文档整理；
-- 可复用性验证。
+## 4. 多对话协作方式
 
-## 5. 多对话协作方式
+聊天历史不作为项目当前状态源。
 
-聊天记录只承担讨论。
-
-项目真实状态必须落到：
+项目真实状态由远程仓库当前 `main` 分支中的以下内容共同构成：
 
 - 代码；
+- `.ioc`；
+- CMake；
+- linker；
+- README；
 - `DECISIONS.md`；
 - `STATUS.md`；
 - `HANDOFF.md`；
-- 专题设计文档。
+- 对应专题文档。
 
-每个新对话开始后：
+每个新对话只承担一个明确工作单元。
 
-1. 读取本文件；
-2. 读取 `01_ARCHITECTURE.md`；
-3. 读取 `02_HARDWARE_BASELINE.md`；
-4. 读取 `06_DECISIONS.md`；
-5. 读取 `07_STATUS.md`；
-6. 读取 `08_HANDOFF.md`；
-7. 根据当前状态和用户当前需求确定本对话职责；
-8. 只在确定的职责范围内工作。
+默认读取顺序：
 
-如果用户已经明确指定当前任务，则直接围绕该任务工作，不重新安排整个项目。
+1. `00_PROJECT.md`；
+2. `01_ARCHITECTURE.md`；
+3. `02_HARDWARE_BASELINE.md`；
+4. `06_DECISIONS.md`；
+5. `07_STATUS.md`；
+6. `08_HANDOFF.md`；
+7. 当前任务实际需要的源码 / `.ioc` / linker / HAL / Datasheet / Reference Manual。
 
-## 6. 项目资料优先级
-
-发生冲突时，原则上采用以下优先级：
+## 5. 资料优先级
 
 ### 硬件连接
 
-实际 PCB / 当前有效原理图  
-→ 芯片 Datasheet  
-→ 项目文档  
-→ 推断
+```text
+实际 PCB / 当前有效原理图
+>
+器件 Datasheet
+>
+Hardware Baseline
+>
+聊天历史与推断
+```
 
-### LAN8720AI 行为
+### PHY 行为
 
-LAN8720A/LAN8720Ai Datasheet  
-→ 当前驱动实测  
-→ ST 示例或其他参考代码  
-→ 网络资料
+```text
+LAN8720A/LAN8720Ai Datasheet
+>
+实测
+>
+官方参考实现
+>
+网络资料
+```
 
-### STM32H743 外设行为
+### STM32 外设行为
 
-STM32H743 Reference Manual / Datasheet  
-→ 当前项目使用的 HAL 源码  
-→ STM32CubeH7 官方示例  
-→ 其他资料
+```text
+对应 Reference Manual / Datasheet
+>
+当前仓库 HAL 源码
+>
+STM32CubeH7 官方示例
+>
+其他资料
+```
 
 ### 项目架构
 
-Accepted `DECISIONS.md`  
-→ `01_ARCHITECTURE.md`  
-→ 专题设计文档  
-→ 当前讨论中的临时方案
+```text
+Accepted DECISIONS.md
+>
+01_ARCHITECTURE.md
+>
+专题技术文档
+>
+当前讨论中的临时方案
+```
 
-如果高优先级资料之间发生冲突，应显式记录，不能自行选择一个结果继续实现。
+发生冲突时必须显式记录，不允许把推断写成已确认事实。
+
+## 6. 文档分类与写作规则
+
+项目文档分为两类。
+
+### 6.1 面向使用者 / 技术阅读者
+
+包括：
+
+```text
+README.md
+01_ARCHITECTURE.md
+02_HARDWARE_BASELINE.md
+03_MEMORY_DMA.md
+04_RTOS_NETWORK.md
+docs/BOARD_PORTING.md
+```
+
+规则：
+
+- 不展示 M0/M1/M2 等内部开发阶段；
+- 不使用“当前阶段”“下一阶段”“工作单元”等项目推进语义；
+- 只描述项目介绍、支持状态、硬件、架构、环境依赖、使用方法、限制、技术设计和迁移方法；
+- 未实现的能力直接标记“未实现”；
+- 区分 Static Review、Build Verified、On-board Verified 和 Measured；
+- 不把规划写成已经实现的功能；
+- README 永远保持产品 / 库视角，不作为开发日志。
+
+### 6.2 项目控制 / 规划文档
+
+包括：
+
+```text
+00_PROJECT.md
+05_TEST_PLAN.md
+06_DECISIONS.md
+07_STATUS.md
+08_HANDOFF.md
+```
+
+这些文档可以包含：
+
+- M0/M1/M2 等里程碑；
+- 当前阶段；
+- 下一工作单元；
+- Accepted / Proposed / Superseded；
+- 未完成项；
+- 测试计划；
+- 交接信息。
 
 ## 7. 文档职责
 
-- `00_PROJECT.md`：项目范围、目标和协作规则；
-- `01_ARCHITECTURE.md`：Ethernet 技术总纲；
-- `02_HARDWARE_BASELINE.md`：当前验证板硬件事实；
-- `03_MEMORY_DMA.md`：M2 前后形成，记录 DMA / MPU / Cache 最终方案；
-- `04_RTOS_NETWORK.md`：M3 前后形成，记录 FreeRTOS + LwIP 任务和线程模型；
-- `05_TEST_PLAN.md`：分阶段测试和最终验收；
+- `README.md`：项目介绍、支持状态、环境、构建、烧录、入口文档；
+- `01_ARCHITECTURE.md`：稳定软件分层和职责边界；
+- `02_HARDWARE_BASELINE.md`：当前验证板硬件事实与验证状态；
+- `03_MEMORY_DMA.md`：DMA / MPU / Cache / linker 当前有效设计；
+- `04_RTOS_NETWORK.md`：FreeRTOS / LwIP 运行边界与支持状态；
+- `docs/BOARD_PORTING.md`：板级迁移指南；
+- `05_TEST_PLAN.md`：里程碑测试与验收；
 - `06_DECISIONS.md`：跨模块设计决定；
-- `07_STATUS.md`：当前项目事实和进度；
-- `08_HANDOFF.md`：最近一次工作单元的交接信息。
+- `07_STATUS.md`：当前事实和进度；
+- `08_HANDOFF.md`：最近工作单元交接。
 
-`03_MEMORY_DMA.md`、`04_RTOS_NETWORK.md` 应在对应实现阶段基于资料和实际代码完善，不提前冻结。
+原 `docs/STM32H7 Ethernet 通用驱动开发指导与规划.md` 与旧 `01_ARCHITECTURE.md` 内容重复，不再保留双份架构文档；`01_ARCHITECTURE.md` 是唯一架构技术文档。
+
+## 8. 板级配置与自动化原则
+
+板级硬件配置保持显式、可审查：
+
+- `.ioc` 保存 CubeMX 外设和 MPU 配置；
+- BSP 保存板级 Reset / 时钟准备等逻辑；
+- linker 明确表达 DMA SRAM 和 section；
+- `.map` / ELF 用于验证实际地址。
+
+不使用正则或字符串 patch 脚本自动修改 linker。
+
+自动化优先用于：
+
+- 构建；
+- map / ELF 验证；
+- alignment / 地址范围检查；
+- CI 阻止错误内存布局。
+
+只有出现真实多板维护需求时，才评估结构化 Board Config + linker template 生成。
+
+## 9. GitHub 写入规则
+
+默认 GitHub 只读。
+
+只有用户在当前请求中明确授权，才能修改远程文件、提交或更新分支。授权只覆盖当前明确工作范围，不自动延续到之后的工作单元。
