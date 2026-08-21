@@ -63,7 +63,6 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 static uint8_t g_ethernet_test_rx_frame[ETHERNET_FRAME_BUFFER_SIZE];
-static bool EthernetTest_WaitRawFrames(uint32_t expected_count, uint32_t timeout_ms);
 /* USER CODE END Variables */
 /* Definitions for BootstrapTask */
 osThreadId_t BootstrapTaskHandle;
@@ -76,6 +75,7 @@ const osThreadAttr_t BootstrapTask_attributes = {
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 static bool EthernetTest_SendRawFrame(const Lan8720Status *phy_status);
+static bool EthernetTest_WaitRawFrames(uint32_t expected_count, uint32_t timeout_ms);
 /* USER CODE END FunctionPrototypes */
 
 void StartBootstrapTask(void *argument);
@@ -140,7 +140,7 @@ void StartBootstrapTask(void *argument)
 
   uint32_t elapsed_ms = 0U;
 
-  printf("[M1] BootstrapTask started\r\n");
+  printf("[ETH] BootstrapTask started\r\n");
 
   // MX_GPIO_Init() 已经将 PHY nRST 拉低。等待上电稳定后释放 PHY 硬件复位。
   osDelay(25U);
