@@ -29,3 +29,17 @@ void BoardEthernet_PhyResetRelease(void)
 {
     HAL_GPIO_WritePin(ETH_RESET_GPIO_Port, ETH_RESET_Pin, GPIO_PIN_SET);
 }
+
+/**
+ * @brief  准备 Ethernet DMA 使用的板级内存。
+ *
+ * @details
+ * 当前验证板将 STM32H743 SRAM3 用作 Ethernet DMA 专用内存，
+ * 在 Ethernet 初始化前显式使能 D2 SRAM3 时钟。
+ *
+ * @return 无。
+ */
+void BoardEthernet_PrepareDmaMemory(void)
+{
+    __HAL_RCC_D2SRAM3_CLK_ENABLE();
+}

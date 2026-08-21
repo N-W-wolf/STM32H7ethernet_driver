@@ -57,7 +57,8 @@ MEMORY
 {
 DTCMRAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 128K
 RAM (xrw)      : ORIGIN = 0x24000000, LENGTH = 512K
-RAM_D2 (xrw)      : ORIGIN = 0x30000000, LENGTH = 288K
+RAM_D2 (xrw)      : ORIGIN = 0x30000000, LENGTH = 256K
+RAM_ETH (xrw)     : ORIGIN = 0x30040000, LENGTH = 32K
 RAM_D3 (xrw)      : ORIGIN = 0x38000000, LENGTH = 64K
 ITCMRAM (xrw)      : ORIGIN = 0x00000000, LENGTH = 64K
 FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 2048K
@@ -241,7 +242,38 @@ SECTIONS
     . = ALIGN(8);
   } >DTCMRAM
 
+  /* Ethernet DMA descriptors */
+  .RxDescripSection 0x30040000 (NOLOAD) :
+  {
+    . = ALIGN(32);
+    KEEP(*(.RxDescripSection))
+    . = ALIGN(32);
+  } >RAM_ETH
+  
+  .TxDescripSection 0x30040080 (NOLOAD) :
+  {
+    . = ALIGN(32);
+    KEEP(*(.TxDescripSection))
+    . = ALIGN(32);
+  } >RAM_ETH
+  
+  ASSERT(ADDR(.RxDescripSection) == 0x30040000,
+         "Ethernet RX descriptor address mismatch")
 
+  ASSERT(SIZEOF(.RxDescripSection) <= 0x80,
+         "Ethernet RX descriptors exceed reserved slot")
+
+  ASSERT(ADDR(.TxDescripSection) == 0x30040080,
+         "Ethernet TX descriptor address mismatch")
+
+  ASSERT(SIZEOF(.TxDescripSection) <= 0x80,
+         "Ethernet TX descriptors exceed reserved slot")
+         
+  ASSERT(SIZEOF(.RxDescripSection) > 0,
+       	 "Ethernet RX descriptor section is empty")
+
+  ASSERT(SIZEOF(.TxDescripSection) > 0,
+         "Ethernet TX descriptor section is empty")
 
   /* Remove information from the standard libraries */
   /DISCARD/ :

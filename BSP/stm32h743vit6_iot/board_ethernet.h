@@ -8,6 +8,7 @@ extern "C" {
 
 void BoardEthernet_PhyResetAssert(void);
 void BoardEthernet_PhyResetRelease(void);
+void BoardEthernet_PrepareDmaMemory(void);
 
 #ifdef __cplusplus
 }
