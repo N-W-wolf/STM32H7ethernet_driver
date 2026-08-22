@@ -5,9 +5,9 @@
 - 当前阶段：M2 MAC / DMA
 - 当前远程基线：本文件所在提交
 
-## 1. 上一实现已完成的上板验证
+## 1. 异步 RX 已完成上板验证
 
-异步 RX 在重构前的测试固件 `6b2f1f4bd153e6e4d119be6679a8dea55e7d4ccd` 上已完成：
+异步 RX 在原始结构测试固件 `6b2f1f4bd153e6e4d119be6679a8dea55e7d4ccd` 上已完成 1000 / 1000；Package 化后再次得到同样结果：
 
 ```text
 [ETH] EthernetRxTask started
@@ -21,31 +21,30 @@
 [ETH] Async RX test 1000/1000 PASS, total=1000
 ```
 
-已确认路径：
+Package 化后的已确认路径：
 
 ```text
 ETH IRQ
 → HAL_ETH_IRQHandler()
 → HAL_ETH_RxCpltCallback()
+→ Ethernet Driver RX event
 → CMSIS-RTOS2 Thread Flag
-→ Ethernet RX Task
+→ EthernetRtos_RxTask()
 → EthernetDriver_Receive()
-→ HAL_ETH_ReadData()
+→ Demo RX Frame Handler
 → RX Buffer recycle
 ```
 
 该结果是 On-board Verified，但只验证约 5 ms / Frame 的异步机制和 Buffer recycle，不属于高负载压力测试。
 
-## 2. 本次 Package 化静态实现
+## 2. Driver Package 第一轮重构
 
-仓库产品定位调整为：
+仓库产品定位：
 
 ```text
 Ethernet/   = 可复制的 Driver Package
 当前根目录 STM32CubeMX 工程 = STM32H743 + LAN8720 参考 Demo
 ```
-
-第一步先收敛 Driver 源码，不立即把整个 Demo 移入 `examples/`。
 
 当前 Package：
 
@@ -90,9 +89,11 @@ BSP/stm32h743vit6_iot/ethernet_port.c
 
 只有该文件知道 CubeMX `eth.h`、`heth`、当前 PHY Reset GPIO 和 SRAM3 clock。
 
+本轮回归时发现 `ethernet_port.h` 直接 include `stm32h7xx_hal_eth.h` 会触发 HAL 递归包含顺序问题，表现为大量 `HAL_StatusTypeDef` / `HAL_LockTypeDef` 未定义。已改为 include `stm32h7xx_hal.h`；修复后 Debug 构建和上板测试正常。
+
 ### Driver RX Event 边界
 
-Driver 新增：
+Driver 提供：
 
 ```text
 EthernetDriver_SetRxEventHandler()
@@ -130,7 +131,7 @@ StartEthernetRxTask()
 
 因此测试语义仍留在 Demo，Driver Package 不认识 EtherType `0x88B5`。
 
-## 3. README 定位调整
+## 3. README 与用户接入定位
 
 根 `README.md` 已重写为 Driver Integration Guide，主要顺序：
 
@@ -152,36 +153,28 @@ Driver 架构
 
 ## 4. 当前测试等级
 
-### 旧结构
+### 已确认
 
 - PHY Bring-up：On-board Verified；
 - polling Raw TX：On-board Verified；
 - polling Raw RX 1000 / 1000：On-board Verified；
-- ETH IRQ + CMSIS-RTOS2 async RX 1000 / 1000：On-board Verified。
+- ETH IRQ + CMSIS-RTOS2 async RX 1000 / 1000：On-board Verified；
+- Driver Package 第一轮重构：Debug Build Verified；
+- Driver Package 第一轮重构：PHY / MAC startup On-board Verified；
+- Driver Package 第一轮重构：Async RX 1000 / 1000 On-board Verified。
 
-### 本次 Package 化提交
-
-目前仅完成：
-
-```text
-Static Review
-```
-
-尚未执行：
+### 仍待补充
 
 ```text
-fresh Debug build
 fresh Release build
-map / ELF verification
-Package 化后的再次上板
-Async RX 再次 1000 / 1000
+当前 Package 提交下的 map / ELF 再检查
+CubeMX Generate Code 后边界回归
 ```
 
-因此不要把旧结构的 Build / On-board 结果直接写成本次重构后的验证结果。
+历史 DMA 布局已经 Build / Map Verified，Package 化没有修改 linker 或 DMA section，但在新 Package 提交下仍建议再次检查 map / ELF，不能仅凭“代码未改 linker”替代验证。
 
 ## 5. 当前仍未完成
 
-- Package 化代码重新 Build / map / 上板；
 - `As external` 与 `As weak` 的 CubeMX 6.18.1 实际生成比较；
 - 整个参考 Demo 移入 `examples/`；
 - 用户技术文档与项目控制文档目录重整；
@@ -195,26 +188,18 @@ Async RX 再次 1000 / 1000
 
 ## 6. 下一工作单元
 
-不要直接进入异步 TX。
+Package 化第一轮功能回归已通过，不需要再回退到旧 `Drivers/Ethernet` 结构。
 
-先验证本次 Package 化：
-
-```text
-1. ./build.sh Debug --fresh
-2. ./build.sh Release --fresh
-3. 检查 map / ELF 中 Descriptor 与 RX/TX Pool 地址
-4. 烧录并确认 PHY / MAC 正常启动
-5. PC 再发送 1000 个 0x88B5 Frame
-6. 确认 Async RX 1000 / 1000 PASS
-```
-
-若以上通过，再进行第二步仓库结构收敛：
+下一工作单元优先继续仓库产品化整理：
 
 ```text
-完整 Demo → examples/
-技术文档 / 项目控制文档重新分组
-CubeMX task external/weak 方式实测并冻结
+1. 完整参考 Demo → examples/
+2. 技术文档 / 项目控制文档重新分组
+3. CubeMX task As external / As weak 方式实测并冻结
+4. 补 Release / map 回归
 ```
+
+暂不同时进入异步 TX。
 
 ## 7. 关键不变事实
 
