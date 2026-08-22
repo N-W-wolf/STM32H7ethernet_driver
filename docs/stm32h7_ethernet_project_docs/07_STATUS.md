@@ -2,7 +2,7 @@
 
 - 更新时间：2026-08-22
 - 当前阶段：M2 — STM32H743 MAC / DMA + Driver Package 化
-- 当前状态：ETH IRQ + CMSIS-RTOS2 异步 RX 已完成 1000 / 1000 帧上板验证；正在把已验证实现从 Demo 工程中收敛为可复制的 `Ethernet/` Driver Package。
+- 当前状态：`Ethernet/` Driver Package 第一轮重构已完成 Debug 构建与上板回归；PHY / MAC 正常启动，CMSIS-RTOS2 异步 RX 再次完成 1000 / 1000 帧验证。
 
 ## 1. 已完成
 
@@ -23,7 +23,7 @@
 - [x] RX Pool `0x30042000 / 4 × 1536 B`；
 - [x] TX Pool `0x30044000 / 4 × 1536 B`；
 - [x] MPU Non-cacheable / Descriptor overlay；
-- [x] linker section / ASSERT / map 验证；
+- [x] linker section / ASSERT / map 历史验证；
 - [x] copy-based RX Buffer recycle；
 - [x] polling TX success-path ownership。
 
@@ -41,7 +41,7 @@
 
 ### Driver Package 化
 
-当前重构目标：
+当前结构：
 
 ```text
 Ethernet/
@@ -52,7 +52,7 @@ Ethernet/
 └── RTOS/CMSIS_RTOS2/
 ```
 
-已完成静态实现：
+已完成并回归验证：
 
 - [x] 通用 Driver 从 `Drivers/Ethernet/**` 收敛到根目录 `Ethernet/**`；
 - [x] 新增 `ethernet_port.h`，通用 Driver 不再直接 include Demo `eth.h`；
@@ -62,9 +62,13 @@ Ethernet/
 - [x] RTOS Adapter 不创建 Task，只提供 `EthernetRtos_RxTask()`；
 - [x] RX Frame 通过任务上下文同步 Handler 向上交付；
 - [x] `0x88B5` 测试逻辑继续留在 Demo `freertos.c`，不进入 Driver Package；
-- [x] 根 README 已改为 Driver 集成指南，重点描述 CubeMX、DMA/MPU/linker、Port、API 和 RTOS 接入。
+- [x] 根 README 已改为 Driver 集成指南；
+- [x] 修正 `ethernet_port.h` 直接 include `stm32h7xx_hal_eth.h` 导致的 HAL 递归包含问题，改为 `stm32h7xx_hal.h`；
+- [x] Package 化代码 Debug Build Verified；
+- [x] Package 化代码 On-board Verified：PHY / MAC 正常启动；
+- [x] Package 化代码 On-board Verified：Async RX 1000 / 1000 PASS。
 
-上述 Package 化重构尚未重新 Build / 上板，因此当前只能标记 Static Review，不能继承旧结构的 Build Verified / On-board Verified 结论。
+仍待补充：Release fresh build、当前 Package 提交下的 map / ELF 再检查、CubeMX Generate Code 后边界回归。
 
 ## 2. 已确认验证结果
 
@@ -82,6 +86,8 @@ Duplex      = Full
 
 ### DMA Build / Map Verified
 
+历史已验证布局：
+
 ```text
 RAM_ETH      = 0x30040000 / 32 KiB
 DMARxDscrTab = 0x30040000
@@ -89,6 +95,8 @@ DMATxDscrTab = 0x30040080
 RX Pool      = 0x30042000 / 0x1800
 TX Pool      = 0x30044000 / 0x1800
 ```
+
+Package 化没有修改 linker 或 DMA section 定义，但当前重构后的 map / ELF 再检查仍建议补做。
 
 ### Raw Frame On-board Verified
 
@@ -100,9 +108,9 @@ Polling 基线测试固件：`e50bf6a4ce9c3763e6b863b5982522b4e60ac197`。
 
 ### Async RX On-board Verified
 
-异步 RX 测试固件：`6b2f1f4bd153e6e4d119be6679a8dea55e7d4ccd`。
+异步 RX 原始测试固件：`6b2f1f4bd153e6e4d119be6679a8dea55e7d4ccd`。
 
-实际输出：
+Package 化后再次得到：
 
 ```text
 [ETH] EthernetRxTask started
@@ -116,15 +124,16 @@ Polling 基线测试固件：`e50bf6a4ce9c3763e6b863b5982522b4e60ac197`。
 [ETH] Async RX test 1000/1000 PASS, total=1000
 ```
 
-该结果确认：
+该结果确认 Package 化后的路径仍能持续工作：
 
 ```text
 ETH IRQ
 → HAL_ETH_IRQHandler()
-→ RX complete callback
+→ Driver RX event
 → CMSIS-RTOS2 Thread Flag
-→ RX Task
+→ EthernetRtos_RxTask()
 → EthernetDriver_Receive()
+→ Demo Frame Handler
 → RX Buffer recycle
 ```
 
@@ -171,14 +180,12 @@ RTOS Adapter 不创建 Task；Task 的 priority、stack 和 allocation 由应用
 
 ## 4. 当前未完成
 
-### 本次 Package 化必须先验证
+### Package 化补充验证
 
-- [ ] fresh Debug build；
 - [ ] fresh Release build；
-- [ ] map / ELF 地址无变化；
-- [ ] PHY Bring-up 无回归；
-- [ ] 异步 RX 再次 1000 / 1000；
-- [ ] 确认 CubeMX Generate Code 不破坏当前 wrapper / Port 边界。
+- [ ] 当前重构后的 map / ELF 地址再检查；
+- [ ] CubeMX Generate Code 后检查 USER CODE / Port / RTOS Adapter 边界；
+- [ ] 实测 CubeMX `As external` / `As weak` Task code generation。
 
 ### M2 后续
 
@@ -191,10 +198,9 @@ RTOS Adapter 不创建 Task；Task 的 priority、stack 和 allocation 由应用
 
 ### 仓库结构 / 文档后续
 
-- [ ] 在 Package 化上板验证后，把完整 STM32H743 Demo 收敛到 `examples/`；
+- [ ] 把完整 STM32H743 Demo 收敛到 `examples/`；
 - [ ] 整理 `docs/` 用户技术文档与项目控制文档的目录；
-- [ ] 清理旧路径和重复迁移文档；
-- [ ] 实测 CubeMX `As external` / `As weak` Task code generation，冻结推荐方式。
+- [ ] 清理旧路径和重复迁移文档。
 
 ### M3 ～ M6
 
@@ -213,13 +219,10 @@ LwIP / Ping / UDP / TCP / Stress 尚未进入。
 
 ## 6. 下一工作单元
 
-先验证本次 Package 化代码，不进入异步 TX：
+Package 化第一轮功能回归已经通过。下一工作单元优先继续仓库产品化整理，而不是立即进入异步 TX：
 
 ```text
-fresh build
-→ map / ELF
-→ 上板启动
-→ Async RX 1000 / 1000
+参考 Demo → examples/
+技术文档 / 项目控制文档重新分组
+CubeMX Task external/weak 方式实测并冻结
 ```
-
-验证通过后再进行第二步仓库整理：把参考 Demo 移入 `examples/`，并继续收敛技术文档目录。
