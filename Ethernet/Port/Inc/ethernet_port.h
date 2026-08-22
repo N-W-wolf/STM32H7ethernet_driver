@@ -1,7 +1,7 @@
 #ifndef ETHERNET_PORT_H
 #define ETHERNET_PORT_H
 
-#include "stm32h7xx_hal_eth.h"
+#include "stm32h7xx_hal.h"
 
 #ifdef __cplusplus
 extern "C" {
