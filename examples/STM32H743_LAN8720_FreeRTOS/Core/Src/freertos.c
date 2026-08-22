@@ -88,7 +88,7 @@ static void EthernetDemo_RxFrameHandler(const uint8_t *frame, uint16_t length, v
 /* USER CODE END FunctionPrototypes */
 
 void StartBootstrapTask(void *argument);
-void StartEthernetRxTask(void *argument);
+void EthernetRtos_RxTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -123,7 +123,7 @@ void MX_FREERTOS_Init(void) {
   BootstrapTaskHandle = osThreadNew(StartBootstrapTask, NULL, &BootstrapTask_attributes);
 
   /* creation of EthernetRxTask */
-  EthernetRxTaskHandle = osThreadNew(StartEthernetRxTask, NULL, &EthernetRxTask_attributes);
+  EthernetRxTaskHandle = osThreadNew(EthernetRtos_RxTask, NULL, &EthernetRxTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -154,6 +154,10 @@ void StartBootstrapTask(void *argument)
   uint32_t elapsed_ms = 0U;
 
   printf("[ETH] BootstrapTask started\r\n");
+
+  EthernetRtos_SetRxFrameHandler(
+    EthernetDemo_RxFrameHandler,
+    NULL);
 
   /* MX_GPIO_Init() 已经将 PHY nRST 拉低。等待上电稳定后释放 PHY 硬件复位。 */
   osDelay(25U);
@@ -290,22 +294,22 @@ void StartBootstrapTask(void *argument)
   /* USER CODE END StartBootstrapTask */
 }
 
-/* USER CODE BEGIN Header_StartEthernetRxTask */
+/* USER CODE BEGIN Header_EthernetRtos_RxTask */
 /**
 * @brief Function implementing the EthernetRxTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartEthernetRxTask */
-void StartEthernetRxTask(void *argument)
+/* USER CODE END Header_EthernetRtos_RxTask */
+__weak void EthernetRtos_RxTask(void *argument)
 {
-  /* USER CODE BEGIN StartEthernetRxTask */
-  EthernetRtos_SetRxFrameHandler(EthernetDemo_RxFrameHandler, NULL);
-
-  printf("[ETH] EthernetRxTask started\r\n");
-
-  EthernetRtos_RxTask(argument);
-  /* USER CODE END StartEthernetRxTask */
+  /* USER CODE BEGIN EthernetRtos_RxTask */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END EthernetRtos_RxTask */
 }
 
 /* Private application code --------------------------------------------------*/
@@ -313,7 +317,7 @@ void StartEthernetRxTask(void *argument)
 /**
  * @brief  根据 PHY 协商结果配置并启动 Ethernet MAC/DMA。
  *
- * @param[in] phy_status PHY 当��链路状态。
+ * @param[in] phy_status PHY 当前链路状态。
  *
  * @retval true   MAC 配置并启动成功。
  * @retval false  PHY 状态无效、RX Runtime 未就绪或 Ethernet 操作失败。
