@@ -115,7 +115,7 @@ STM32 HAL / Board
 - RX Task drain；
 - 异步 RX 连续 1000 / 1000。
 
-当前正在进行 Driver Package 化，已形成 `Ethernet/`、Port 和 CMSIS-RTOS2 Adapter 的静态实现，但该重构提交仍需 fresh build / map / 再次上板验证。
+Driver Package 第一轮重构已经形成 `Ethernet/`、Port 和 CMSIS-RTOS2 Adapter，并完成 Debug 构建与上板回归：PHY / MAC 正常启动，Package 化后的异步 RX 再次达到 1000 / 1000。Release fresh build、map / ELF 再检查和 CubeMX Task 生成方式对比仍属于后续补充验证。
 
 M2 仍未完成：
 
