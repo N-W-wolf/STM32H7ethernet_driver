@@ -40,6 +40,8 @@ STM32 HAL / Board
 - `RTOS/CMSIS_RTOS2`：可选异步 RX Adapter，把 IRQ 事件转为 Thread Flag，并在任务上下文读取 Frame；
 - `ethernetif` / LwIP、IP、UDP、TCP 和应用业务不进入 Driver Core。
 
+运行时 callback、weak symbol、IRQ/Task 交接和 RX Buffer ownership 的完整原理说明见 [`docs/ETHERNET_RUNTIME_FLOW.md`](docs/ETHERNET_RUNTIME_FLOW.md)。
+
 目录：
 
 ```text
@@ -227,7 +229,14 @@ lifetime
 EthernetRtos_RxTask(void *argument);
 ```
 
-当前建议的 CubeMX 集成方式是 **As weak**：CubeMX 负责生成 Task Object、priority、stack 和 `osThreadNew()`，Package 提供同名强定义 Task Entry。CubeMX 6.18.1 的公开生成结果已经确认 `As weak` 会生成 `__weak` Task Entry；本仓库 Example 仍需在本地 CubeMX Generate Code 后完成最终回归，因此该方式在项目决策中保持 Proposed，直到当前 `.ioc` 实测完成。
+当前 Reference Example 已验证的 CubeMX 集成方式是 **As weak**：
+
+```text
+Task Entry : EthernetRtos_RxTask
+Generation : As weak
+```
+
+CubeMX 负责生成 Task Object、priority、stack、allocation 和 `osThreadNew()`，generated `freertos.c` 提供 weak stub；Package 在 `Ethernet/RTOS/CMSIS_RTOS2/Src/ethernet_rtos.c` 中提供同名强定义实现。该方式已完成 CubeMX Generate Code、Debug/Release Build、map/ELF 和 On-board async RX 回归。
 
 非 CubeMX 用户可以直接使用 CMSIS-RTOS2 / FreeRTOS API 创建任务，入口仍指向 `EthernetRtos_RxTask()`。
 
@@ -695,6 +704,8 @@ Raw Ethernet TX
 Raw Ethernet RX
 Polling RX 1000 / 1000
 ETH IRQ + CMSIS-RTOS2 async RX 1000 / 1000
+Reference Example 新路径 Debug / Release / map / On-board 回归
+CubeMX As weak Task Entry + Package strong implementation
 ```
 
 当前未完成：
@@ -710,4 +721,4 @@ TCP Echo
 高负载 / 长时间压力测试
 ```
 
-详细设计与验证记录见 `docs/stm32h7_ethernet_project_docs/`。
+详细架构、内存和 RTOS 设计见 `docs/stm32h7_ethernet_project_docs/`；运行时 callback / ownership 原理见 [`docs/ETHERNET_RUNTIME_FLOW.md`](docs/ETHERNET_RUNTIME_FLOW.md)。
