@@ -51,6 +51,7 @@ STM32 HAL / Board
 Ethernet/                                  ← Driver Package
 examples/STM32H743_LAN8720_FreeRTOS/       ← 完整参考 Demo
 README.md                                  ← Driver Integration Guide
+docs/ETHERNET_RUNTIME_FLOW.md              ← Runtime / callback 原理说明
 docs/stm32h7_ethernet_project_docs/        ← 技术与项目状态文档
 ```
 
@@ -81,7 +82,9 @@ Reference Example 内部包含 CubeMX `.ioc`、Core、CMSIS/HAL、FreeRTOS、BSP
 - CMSIS-RTOS2 Thread Flag；
 - RX Task drain；
 - async RX 1000 / 1000；
-- Driver Package 第一轮 Port / RTOS Adapter 重构后的 Debug Build + On-board 1000 / 1000 回归。
+- Driver Package Port / RTOS Adapter 重构；
+- 完整 Reference Example 移入 `examples/` 后重新 Build / map / On-board 回归；
+- CubeMX `EthernetRtos_RxTask + As weak` 方案 Generate Code / Build / On-board 验证。
 
 仍未完成：异步 TX completion ownership、DMA/MAC error recovery、完整 Link lifecycle、长时间/高负载、D-Cache-on 专项验证。
 
@@ -89,18 +92,17 @@ Reference Example 内部包含 CubeMX `.ioc`、Core、CMSIS/HAL、FreeRTOS、BSP
 
 LwIP / Ping / UDP / TCP / Stress 尚未进入。
 
-## 5. 当前第二阶段产品化整理
+## 5. 当前产品化状态
 
-已静态完成：
+已完成：
 
-- `Ethernet/` 保持仓库根目录产品；
-- 完整 STM32H743 Reference Example 移入 `examples/STM32H743_LAN8720_FreeRTOS/`；
+- `Ethernet/` 为仓库根目录产品；
+- 完整 STM32H743 Reference Example 位于 `examples/STM32H743_LAN8720_FreeRTOS/`；
 - Example CMake 通过 `../../Ethernet` 引用共享 Package；
 - 根 README 作为完整集成指南；
 - 原 `docs/BOARD_PORTING.md` 的迁移职责合并到 README，删除重复文档；
-- CubeMX Task `As weak` 作为 Proposed 推荐方式记录。
-
-该目录迁移提交尚未由当前环境执行 fresh Build / map / On-board，因此只能标记 Static Review；旧目录下的上板结果不能自动写成新路径提交已验证。
+- CubeMX RX Task 使用 `EthernetRtos_RxTask + As weak`，CubeMX 管 Task 资源，Package 提供强定义实现；
+- 新增 `docs/ETHERNET_RUNTIME_FLOW.md`，专门解释 weak symbol、HAL callback、运行时 Handler、IRQ/Task 和 RX Buffer ownership。
 
 ## 6. 多对话状态管理
 
@@ -118,7 +120,7 @@ LwIP / Ping / UDP / TCP / Stress 尚未进入。
 
 面向使用者：根 `README.md` 是首要 Integration Guide，可独立完成关键 CubeMX / DMA / MPU / linker / Port / RTOS 接入。
 
-专题文档继续提供更深的架构、硬件、内存和 RTOS 设计；`05_TEST_PLAN.md`、`06_DECISIONS.md`、`07_STATUS.md`、`08_HANDOFF.md` 属于项目控制文档。
+专题文档继续提供更深的架构、硬件、内存、RTOS 和 Runtime 原理说明；`05_TEST_PLAN.md`、`06_DECISIONS.md`、`07_STATUS.md`、`08_HANDOFF.md` 属于项目控制文档。
 
 ## 8. CubeMX / 手工代码边界
 

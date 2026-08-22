@@ -2,6 +2,8 @@
 
 本文描述 Driver Package 与 FreeRTOS / CMSIS-RTOS2 / LwIP 的运行时边界。当前 async RX 已实现并上板验证；async TX、ethernetif 和 LwIP 尚未实现。
 
+如果需要理解 weak symbol、HAL callback、运行时 Handler 注册、IRQ/Task 交接和 RX Buffer ownership 的完整调用过程，见：[`docs/ETHERNET_RUNTIME_FLOW.md`](../ETHERNET_RUNTIME_FLOW.md)。
+
 ## 1. 运行时分层
 
 ```text
@@ -109,26 +111,43 @@ EthernetRtos_SetRxFrameHandler(handler, context);
 
 Reference Example 的 `0x88B5` / 1000 Frame 计数属于 Demo 测试逻辑，不进入 Package。
 
-未来 ethernetif 可以在该任务上下文把 Frame 转换为 LwIP pbuf；具体 pbuf ownership 在 M3 再冻结。
+未来 ethernetif 可以在该任务上下文把 Frame 转换为 LwIP pbuf；具体 pbuf ownership 在 LwIP 工作单元再冻结。
 
 ## 6. CubeMX Task generation
 
-当前 Reference Example 的已验证版本仍使用 CubeMX 生成的 `StartEthernetRxTask()` wrapper，在 USER CODE 中注册 Demo Handler 后调用 `EthernetRtos_RxTask()`。
-
-产品化后的倾向方案：
+当前 Reference Example 已采用：
 
 ```text
 Task Entry : EthernetRtos_RxTask
 Generation : As weak
 ```
 
-CubeMX 6.18.1 的同版本生成结果已确认 `As weak` 会生成 `__weak` Entry，并保留 CubeMX 对 Task attributes / `osThreadNew()` 的管理。这与 D021 边界一致。
+CubeMX 6.18.1 的实际生成结果：
 
-但当前 Example 尚未实际切换后执行 Generate Code + Build + On-board，因此 D023 仍为 Proposed。不要直接手改 generated `freertos.c` outside USER CODE。
+- CubeMX 继续生成 Task attributes 和 `osThreadNew()`；
+- generated `freertos.c` 提供 `__weak void EthernetRtos_RxTask(void *argument)` stub；
+- `Ethernet/RTOS/CMSIS_RTOS2/Src/ethernet_rtos.c` 提供同名强定义；
+- 链接时由 Package 强定义承担实际 RX Task 逻辑。
 
-## 7. 非 CubeMX 用户
+该方式已经在当前 Reference Example 上完成 Generate Code、Build 和 On-board async RX 回归，因此 D023 已冻结为 Accepted。
 
-可以直接使用 RTOS API 创建 Task，入口指向 `EthernetRtos_RxTask()`。Driver Package 不依赖 `.ioc` 的具体 Task 名或 CubeMX 生成的 Task Handle 变量。
+非 CubeMX 用户可以直接使用 CMSIS-RTOS2 / FreeRTOS API 创建 Task，入口同样指向 `EthernetRtos_RxTask()`。
+
+## 7. Runtime registration 边界
+
+真正的运行时 Handler 注册有两层：
+
+```text
+EthernetDriver_SetRxEventHandler()
+→ Driver → RTOS Adapter
+
+EthernetRtos_SetRxFrameHandler()
+→ RTOS Adapter → Application / ethernetif
+```
+
+前者由 `EthernetRtos_RxTask()` 内部自动完成，普通使用者通常不需要直接调用；后者是上层决定完整 Frame 最终交给谁的接口。
+
+HAL 的 `HAL_ETH_RxCpltCallback()`、`HAL_ETH_RxLinkCallback()`、`HAL_ETH_RxAllocateCallback()` 属于 HAL 固定 callback，不是通过上述注册接口绑定的函数。
 
 ## 8. TX Runtime
 
@@ -185,4 +204,4 @@ ETH IRQ
 
 连续 1000 / 1000，PC 约 5 ms / Frame。该结果不代表高负载或长时间压力测试。
 
-第二阶段将 Reference Example 移入 `examples/` 后仍需重新 Build / On-board，当前目录移动提交只能标记 Static Review。
+Reference Example 移入 `examples/` 后已经重新完成 Build / map / On-board 回归；CubeMX `As weak` Task Entry 方案也已完成同样回归。

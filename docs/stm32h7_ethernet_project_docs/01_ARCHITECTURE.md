@@ -2,6 +2,8 @@
 
 本文描述 STM32H7 Ethernet Driver Package 的稳定分层、依赖方向和模块职责。当前验证硬件为 STM32H743VIT6 + LAN8720AI + RMII；Reference Example 位于 `examples/STM32H743_LAN8720_FreeRTOS/`。
 
+运行时 callback、weak symbol、IRQ/Task 交接和 RX Buffer ownership 的详细原理说明见：[`docs/ETHERNET_RUNTIME_FLOW.md`](../ETHERNET_RUNTIME_FLOW.md)。
+
 ## 1. 总体分层
 
 ```text
@@ -147,7 +149,14 @@ ETH IRQ
 
 Frame Handler 在任务上下文执行，frame pointer 仅在 Handler 调用期间有效。
 
-当前倾向 CubeMX `As weak` + `EthernetRtos_RxTask`，但本 Example 尚未完成该生成方式的本地 Generate Code / Build / On-board 回归，因此仍是 Proposed。
+当前 Reference Example 已采用并验证：
+
+```text
+Task Entry : EthernetRtos_RxTask
+Generation : As weak
+```
+
+CubeMX 管理 Task attributes / `osThreadNew()`，Package 提供同名强定义 Task Entry；Generate Code、Build 和 On-board async RX 回归均已通过。
 
 ## 7. ethernetif / LwIP
 
@@ -210,6 +219,6 @@ Task / RTOS 资源配置
 
 ## 11. 当前验证
 
-已 On-board Verified：PHY bring-up、Raw TX/RX、polling RX 1000/1000、ETH IRQ + CMSIS-RTOS2 async RX 1000/1000。第一轮 Package 化后再次完成 Debug Build + async RX 1000/1000。
+已 On-board Verified：PHY bring-up、Raw TX/RX、polling RX 1000/1000、ETH IRQ + CMSIS-RTOS2 async RX 1000/1000。
 
-第二阶段把完整 Demo 移入 `examples/` 的结构提交仍需重新 Build / map / On-board，不能继承旧路径提交的验证等级。
+Driver Package 化、Reference Example 移入 `examples/`、CubeMX `As weak` Task Entry 方案均已完成 Build / map / On-board 回归。

@@ -82,48 +82,40 @@ Reference Example 当前路径：
 examples/STM32H743_LAN8720_FreeRTOS/
 ```
 
-必须重新执行：
+已完成：
 
-```bash
-cd examples/STM32H743_LAN8720_FreeRTOS
-./build.sh Debug --fresh
-./build.sh Release --fresh
-```
+- [x] Debug fresh Build；
+- [x] Release fresh Build；
+- [x] map / ELF RX/TX Descriptor；
+- [x] map / ELF RX/TX Pool；
+- [x] PHY / MAC startup；
+- [x] async RX 1000 / 1000；
+- [x] 无新增 HardFault / DMA Error；
+- [x] CubeMX Generate Code 后目录与 USER CODE 边界保持正确。
 
-检查：
-
-- [ ] Debug fresh Build；
-- [ ] Release fresh Build；
-- [ ] map / ELF RX/TX Descriptor；
-- [ ] map / ELF RX/TX Pool；
-- [ ] PHY / MAC startup；
-- [ ] async RX 1000 / 1000；
-- [ ] 无新增 HardFault / DMA Error；
-- [ ] CubeMX Generate Code 后目录与 USER CODE 边界保持正确。
-
-第二阶段目录迁移提交在这些测试完成前仅标记 Static Review。
+因此 Reference Example 移入 `examples/` 后的结构已达到 Build / Map / On-board Verified。
 
 ### 6. CubeMX Task generation 回归
 
-D023 Proposed 方案：
+D023 采用：
 
 ```text
 Entry      = EthernetRtos_RxTask
 Generation = As weak
 ```
 
-本 Example 上需要：
+当前 Reference Example 已完成：
 
-- [ ] CubeMX 6.18.1 UI 修改 Task；
-- [ ] Generate Code；
-- [ ] `.ioc` diff 符合预期；
-- [ ] `freertos.c` 生成 `__weak` Task Entry；
-- [ ] CubeMX 仍管理 Task attributes / `osThreadNew()`；
-- [ ] Package 强定义链接无冲突；
-- [ ] Debug / Release Build；
-- [ ] async RX 1000 / 1000。
+- [x] CubeMX 6.18.1 UI 修改 Task；
+- [x] Generate Code；
+- [x] `.ioc` diff 符合预期；
+- [x] `freertos.c` 生成 `__weak` Task Entry；
+- [x] CubeMX 仍管理 Task attributes / `osThreadNew()`；
+- [x] Package 强定义链接无冲突；
+- [x] Debug / Release Build；
+- [x] async RX 1000 / 1000。
 
-完成后才能把 D023 从 Proposed 改成 Accepted。
+D023 已从 Proposed 转为 Accepted。
 
 ### 7. M2 仍未完成
 

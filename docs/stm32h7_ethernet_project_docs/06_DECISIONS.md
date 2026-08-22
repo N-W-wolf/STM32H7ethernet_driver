@@ -156,6 +156,8 @@ LAN8720 PHY Driver 与 FreeRTOS/LwIP 解耦，只通过 MDIO Wrapper 提供 Read
 
 根 README 面向 Driver 使用者，不作为开发日志；项目控制文档可包含 M0/M1/M2、工作单元、Accepted/Proposed 和测试状态。Static Review、Build Verified、On-board Verified、Measured 必须区分。
 
+运行时机制、callback、weak symbol 与 ownership 原理说明独立放在 `docs/ETHERNET_RUNTIME_FLOW.md`，README 只提供入口链接，不复制整篇原理说明。
+
 ---
 
 ## D016 STM32H743 Ethernet DMA 内存与 MPU
@@ -294,16 +296,33 @@ examples/STM32H743_LAN8720_FreeRTOS/
 
 ## D023 CubeMX Ethernet RX Task 生成方式
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-08-22
 
-倾向使用：
+当前 Reference Example 使用：
 
 ```text
 Task Entry : EthernetRtos_RxTask
 Generation : As weak
 ```
 
-理由：CubeMX 6.18.1 的实际公开生成结果已确认 `As weak` 会生成 `__weak` Task Entry，同时 CubeMX 继续负责 Task Object、priority、stack、allocation 和 `osThreadNew()`；Package 可以提供同名强定义实现，符合 D021。
+CubeMX 6.18.1 实际生成行为已在当前 Example 中确认：
 
-当前仓库 `.ioc` 尚未在本 Example 中切换后执行 Generate Code + Build + On-board 回归，因此本决定保持 Proposed。未验证前不手改生成文件伪装完成。
+- CubeMX 继续生成 Task attributes、priority、stack、allocation 和 `osThreadNew()`；
+- generated `freertos.c` 生成 `__weak void EthernetRtos_RxTask(void *argument)` stub；
+- `Ethernet/RTOS/CMSIS_RTOS2/Src/ethernet_rtos.c` 提供同名强定义；
+- 链接时由 Package 强定义承担实际 RX Task 行为。
+
+该方案已完成 Generate Code、Debug/Release Build、map/ELF 检查和 On-board async RX 1000 / 1000 回归。
+
+因此正式冻结边界：
+
+```text
+CubeMX / Application
+→ 管理 Task object 与资源
+
+Ethernet Package
+→ 管理 EthernetRtos_RxTask() 实际实现
+```
+
+非 CubeMX 用户仍可直接使用 RTOS API 创建 Task，并把入口指向 `EthernetRtos_RxTask()`。
