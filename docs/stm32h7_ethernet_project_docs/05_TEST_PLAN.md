@@ -132,7 +132,7 @@ PC interval    ≈ 5 ms / Frame
 - [x] 一次唤醒持续 drain 到 `ETHERNET_RX_NONE`；
 - [x] 连续 1000 / 1000 async RX。
 
-异步 RX 测试固件：
+异步 RX 原始测试固件：
 
 ```text
 6b2f1f4bd153e6e4d119be6679a8dea55e7d4ccd
@@ -166,18 +166,23 @@ Ethernet/
 
 并新增 Port + CMSIS-RTOS2 Adapter。
 
-重构后必须重新执行：
+已完成：
 
-- [ ] `./build.sh Debug --fresh`；
+- [x] Debug build；
+- [x] PHY / MAC 启动回归；
+- [x] Package 化后的 Async RX 1000 / 1000；
+- [x] 修正 `ethernet_port.h` HAL 头文件递归包含问题；
+- [x] 本次上板过程中未出现 HardFault，RX 测试正常结束。
+
+仍需补充：
+
 - [ ] `./build.sh Release --fresh`；
-- [ ] map / ELF Descriptor 地址；
-- [ ] map / ELF RX/TX Pool 地址与大小；
-- [ ] PHY / MAC 启动回归；
-- [ ] Raw / Async RX 1000 / 1000；
-- [ ] 确认无新的 HardFault / DMA Error；
-- [ ] CubeMX Generate Code 后检查 USER CODE / Port 边界。
+- [ ] 当前 Package 提交下重新检查 map / ELF Descriptor 地址；
+- [ ] 当前 Package 提交下重新检查 map / ELF RX/TX Pool 地址与大小；
+- [ ] CubeMX Generate Code 后检查 USER CODE / Port / RTOS Adapter 边界；
+- [ ] 实测 CubeMX `As external` / `As weak` Task 生成方式。
 
-在这些测试完成前，Package 化提交只能标记 Static Review。
+因此当前 Package 化可以标记 Debug Build Verified + On-board Verified，但不能把 Release / 新提交 map 再检查写成已经完成。
 
 ### 5. M2 尚未完成
 
