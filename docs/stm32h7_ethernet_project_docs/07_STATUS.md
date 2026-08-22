@@ -1,47 +1,43 @@
 # Project Status
 
 - 更新时间：2026-08-22
-- 当前阶段：M2 — STM32H743 MAC / DMA + Driver Package 化
-- 当前状态：`Ethernet/` Driver Package 第一轮重构已完成 Debug 构建与上板回归；PHY / MAC 正常启动，CMSIS-RTOS2 异步 RX 再次完成 1000 / 1000 帧验证。
+- 当前阶段：M2 — MAC / DMA + Driver Package 产品化整理
+- 当前状态：第一轮 `Ethernet/` Package 化已完成 Debug Build 和 Async RX 1000 / 1000 上板回归；第二阶段已把完整 STM32H743 Reference Example 移入 `examples/`，该路径重构当前仅 Static Review，等待本地 fresh Build / map / On-board 回归。
 
-## 1. 已完成
+## 1. 已确认完成
 
-### 工程与硬件基线
+### 硬件 / PHY
 
 - [x] STM32H743VIT6 + LAN8720AI + RMII；
-- [x] STM32 HAL + FreeRTOS / CMSIS-RTOS2；
-- [x] CubeMX 6.18.1 / STM32CubeH7 V1.13.0 / HAL ETH 1.11.6；
-- [x] PHY Reset、MDIO、PHY ID、Address、Strap；
+- [x] PHY Reset / MDIO / ID / Address / Strap；
 - [x] Auto-negotiation、Link、100M Full Duplex；
-- [x] USART1 基础调试输出。
+- [x] USART1 调试输出。
 
 ### DMA / Memory
 
-- [x] SRAM3 `0x30040000 ~ 0x30047FFF` 作为 `RAM_ETH`；
-- [x] RX Descriptor `0x30040000`；
-- [x] TX Descriptor `0x30040080`；
-- [x] RX Pool `0x30042000 / 4 × 1536 B`；
-- [x] TX Pool `0x30044000 / 4 × 1536 B`；
-- [x] MPU Non-cacheable / Descriptor overlay；
-- [x] linker section / ASSERT / map 历史验证；
-- [x] copy-based RX Buffer recycle；
-- [x] polling TX success-path ownership。
+- [x] RAM_ETH = SRAM3 `0x30040000 / 32 KiB`；
+- [x] RX Desc `0x30040000`；
+- [x] TX Desc `0x30040080`；
+- [x] RX Pool `0x30042000 / 0x1800 / 4×1536 B`；
+- [x] TX Pool `0x30044000 / 0x1800 / 4×1536 B`；
+- [x] MPU Non-cacheable + Descriptor Device overlay；
+- [x] linker ASSERT / map 历史验证；
+- [x] copy-based RX recycle；
+- [x] polling TX success ownership。
 
-### MAC / DMA 数据路径
+### MAC / DMA Runtime
 
-- [x] PHY Speed / Duplex → MAC 配置；
+- [x] PHY Speed / Duplex → MAC；
 - [x] `HAL_ETH_Start_IT()`；
-- [x] polling TX；
-- [x] polling RX；
+- [x] Raw TX / RX；
+- [x] polling RX 1000 / 1000；
 - [x] ETH IRQ；
-- [x] `HAL_ETH_RxCpltCallback()`；
-- [x] CMSIS-RTOS2 Thread Flag notification；
-- [x] RX Task 中 drain `EthernetDriver_Receive()` 直到 `ETHERNET_RX_NONE`；
-- [x] 异步 RX 连续 1000 / 1000 帧上板验证。
+- [x] Driver generic RX event；
+- [x] CMSIS-RTOS2 Thread Flag；
+- [x] `EthernetRtos_RxTask()` drain；
+- [x] async RX 1000 / 1000。
 
-### Driver Package 化
-
-当前结构：
+### Driver Package 第一轮
 
 ```text
 Ethernet/
@@ -52,65 +48,43 @@ Ethernet/
 └── RTOS/CMSIS_RTOS2/
 ```
 
-已完成并回归验证：
+- [x] Driver Core 不再直接依赖 Demo `eth.h` / `heth`；
+- [x] Port API 建立；
+- [x] CMSIS-RTOS2 Adapter 建立；
+- [x] Adapter 不创建 Task；
+- [x] Frame Handler 保持任务上下文；
+- [x] `0x88B5` 测试逻辑留在 Demo；
+- [x] Debug Build Verified；
+- [x] On-board Verified：Package 化后 Async RX 1000 / 1000 PASS。
 
-- [x] 通用 Driver 从 `Drivers/Ethernet/**` 收敛到根目录 `Ethernet/**`；
-- [x] 新增 `ethernet_port.h`，通用 Driver 不再直接 include Demo `eth.h`；
-- [x] `EthernetPort_GetHandle()` 解除对全局变量名 `heth` 的直接依赖；
-- [x] 当前 STM32H743 板级 Port 实现放在 `BSP/stm32h743vit6_iot/ethernet_port.c`；
-- [x] 新增 CMSIS-RTOS2 Adapter；
-- [x] RTOS Adapter 不创建 Task，只提供 `EthernetRtos_RxTask()`；
-- [x] RX Frame 通过任务上下文同步 Handler 向上交付；
-- [x] `0x88B5` 测试逻辑继续留在 Demo `freertos.c`，不进入 Driver Package；
-- [x] 根 README 已改为 Driver 集成指南；
-- [x] 修正 `ethernet_port.h` 直接 include `stm32h7xx_hal_eth.h` 导致的 HAL 递归包含问题，改为 `stm32h7xx_hal.h`；
-- [x] Package 化代码 Debug Build Verified；
-- [x] Package 化代码 On-board Verified：PHY / MAC 正常启动；
-- [x] Package 化代码 On-board Verified：Async RX 1000 / 1000 PASS。
+## 2. 第二阶段仓库结构整理
 
-仍待补充：Release fresh build、当前 Package 提交下的 map / ELF 再检查、CubeMX Generate Code 后边界回归。
-
-## 2. 已确认验证结果
-
-### PHY On-board Verified
+当前提交已静态完成：
 
 ```text
-PHY ID1     = 0x0007
-PHY ID2     = 0xC0F1
-PHY Address = 0
-MODE        = 111
-Link        = Up / Down 可检测
-Speed       = 100M
-Duplex      = Full
+Ethernet/                                  ← Driver Package
+examples/STM32H743_LAN8720_FreeRTOS/       ← Reference Example
+README.md                                  ← Integration Guide
+docs/stm32h7_ethernet_project_docs/        ← 项目/专题文档
 ```
 
-### DMA Build / Map Verified
+具体改动：
 
-历史已验证布局：
+- [x] `Core/`、ST `Drivers/`、`Middlewares/`、BSP、`.ioc`、linker、CMake、startup、build/flash 脚本整体移入 Example；
+- [x] Example `CMakeLists.txt` 通过 `../../Ethernet` 引用根 Driver Package；
+- [x] `cmake/stm32cubemx/CMakeLists.txt` 原样移动，没有手工修改；
+- [x] 根 README 扩充为独立 Driver Integration Guide；
+- [x] 新增 Example README；
+- [x] `docs/BOARD_PORTING.md` 内容职责并入根 README并删除；
+- [x] `.gitignore` 支持 nested example build 目录；
+- [x] D022 记录 Product / Example 目录边界；
+- [x] D023 Proposed：CubeMX RX Task 倾向 `As weak`。
 
-```text
-RAM_ETH      = 0x30040000 / 32 KiB
-DMARxDscrTab = 0x30040000
-DMATxDscrTab = 0x30040080
-RX Pool      = 0x30042000 / 0x1800
-TX Pool      = 0x30044000 / 0x1800
-```
+验证等级：**Static Review only**。尚未把这一结构移动提交写成 Build / On-board Verified。
 
-Package 化没有修改 linker 或 DMA section 定义，但当前重构后的 map / ELF 再检查仍建议补做。
+## 3. 已确认 On-board 结果
 
-### Raw Frame On-board Verified
-
-Polling 基线测试固件：`e50bf6a4ce9c3763e6b863b5982522b4e60ac197`。
-
-- 裸 TX：PC `tcpdump` 抓到 60 B / EtherType `0x88B5`；
-- polling RX：单帧 PASS；
-- polling RX：连续 1000 / 1000 PASS，约 5 ms / Frame。
-
-### Async RX On-board Verified
-
-异步 RX 原始测试固件：`6b2f1f4bd153e6e4d119be6679a8dea55e7d4ccd`。
-
-Package 化后再次得到：
+第一轮 Package 化后的实际输出：
 
 ```text
 [ETH] EthernetRxTask started
@@ -124,24 +98,11 @@ Package 化后再次得到：
 [ETH] Async RX test 1000/1000 PASS, total=1000
 ```
 
-该结果确认 Package 化后的路径仍能持续工作：
+该结果证明第一轮 Package 结构下 IRQ → Driver event → Thread Flag → RX Task → Receive → Buffer recycle 可持续工作 1000 帧；不是高负载 Stress Test。
 
-```text
-ETH IRQ
-→ HAL_ETH_IRQHandler()
-→ Driver RX event
-→ CMSIS-RTOS2 Thread Flag
-→ EthernetRtos_RxTask()
-→ EthernetDriver_Receive()
-→ Demo Frame Handler
-→ RX Buffer recycle
-```
+## 4. 当前接口
 
-连续 1000 帧仅验证异步机制和基础 ownership，不代表高负载压力测试。
-
-## 3. 当前 Driver Package 接口
-
-### Port
+Port：
 
 ```text
 EthernetPort_GetHandle()
@@ -150,7 +111,7 @@ EthernetPort_PhyResetAssert()
 EthernetPort_PhyResetRelease()
 ```
 
-### Driver / MDIO / PHY
+Driver / PHY：
 
 ```text
 EthernetDriver_Init()
@@ -159,16 +120,13 @@ EthernetDriver_ConfigureLink()
 EthernetDriver_Start()
 EthernetDriver_Transmit()
 EthernetDriver_Receive()
-
-EthernetMdio_Read()
-EthernetMdio_Write()
-
+EthernetMdio_Read()/Write()
 Lan8720_IsReady()
 Lan8720_RestartAutoNegotiation()
 Lan8720_GetStatus()
 ```
 
-### CMSIS-RTOS2 Adapter
+CMSIS-RTOS2：
 
 ```text
 EthernetRtos_SetRxFrameHandler()
@@ -176,53 +134,28 @@ EthernetRtos_IsReady()
 EthernetRtos_RxTask()
 ```
 
-RTOS Adapter 不创建 Task；Task 的 priority、stack 和 allocation 由应用 / CubeMX 管理。
+## 5. 当前待验证
 
-## 4. 当前未完成
+针对第二阶段目录移动：
 
-### Package 化补充验证
+- [ ] `cd examples/STM32H743_LAN8720_FreeRTOS && ./build.sh Debug --fresh`；
+- [ ] `./build.sh Release --fresh`；
+- [ ] 当前路径下重新检查 map / ELF；
+- [ ] 烧录后 PHY / MAC startup；
+- [ ] async RX 1000 / 1000；
+- [ ] CubeMX Generate Code 后检查路径与 USER CODE；
+- [ ] 在当前 Example 上实际切换 `EthernetRxTask` 为 `EthernetRtos_RxTask + As weak`，Generate Code / Build / On-board 后决定 D023 是否 Accepted。
 
-- [ ] fresh Release build；
-- [ ] 当前重构后的 map / ELF 地址再检查；
-- [ ] CubeMX Generate Code 后检查 USER CODE / Port / RTOS Adapter 边界；
-- [ ] 实测 CubeMX `As external` / `As weak` Task code generation。
+## 6. M2 尚未完成
 
-### M2 后续
-
-- [ ] 异步 TX completion ownership；
+- [ ] Async TX completion ownership；
 - [ ] RX/TX error / drop 统计；
-- [ ] DMA error / timeout recovery；
+- [ ] DMA fatal / RBU / timeout recovery；
 - [ ] Link Down / Up 完整 MAC lifecycle；
-- [ ] 长时间 / 高负载稳定性；
-- [ ] D-Cache 开启后的专项验证。
+- [ ] Task stack high-water mark；
+- [ ] D-Cache 场景；
+- [ ] 长时间 / 高负载。
 
-### 仓库结构 / 文档后续
+## 7. 下一工作单元建议
 
-- [ ] 把完整 STM32H743 Demo 收敛到 `examples/`；
-- [ ] 整理 `docs/` 用户技术文档与项目控制文档的目录；
-- [ ] 清理旧路径和重复迁移文档。
-
-### M3 ～ M6
-
-LwIP / Ping / UDP / TCP / Stress 尚未进入。
-
-## 5. 当前尚未冻结
-
-- CubeMX Task 默认推荐 `As external` 还是 `As weak`；
-- ETH IRQ 最终优先级；
-- RX Task 最终 priority / stack；
-- 异步 TX completion ownership；
-- DMA error recovery；
-- Link change 完整 lifecycle；
-- Cache 开启后的最终策略；
-- LwIP Runtime 参数和 API。
-
-## 6. 下一工作单元
-
-Package 化第一轮功能回归已经通过。下一工作单元优先继续仓库产品化整理，而不是立即进入异步 TX：
-
-```text
-参考 Demo → examples/
-技术文档 / 项目控制文档重新分组
-CubeMX Task external/weak 方式实测并冻结
-```
+先完成本次结构移动的本地 Build / map / On-board 回归和 CubeMX `As weak` 实测，不进入 Async TX。结构回归通过后再决定是收尾 M2 Runtime 还是进入异步 TX completion。

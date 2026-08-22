@@ -1,314 +1,188 @@
 # FreeRTOS / LwIP Runtime Design
 
-本文描述 Ethernet Driver Package 与 FreeRTOS / CMSIS-RTOS2 / LwIP 的运行时边界。
+本文描述 Driver Package 与 FreeRTOS / CMSIS-RTOS2 / LwIP 的运行时边界。当前 async RX 已实现并上板验证；async TX、ethernetif 和 LwIP 尚未实现。
 
-当前已经实现并上板验证 ETH IRQ + CMSIS-RTOS2 异步 RX；异步 TX、`ethernetif` 和 LwIP 尚未实现。
-
-## 1. 目标运行路径
+## 1. 运行时分层
 
 ```text
-PHY / MAC
-    ↓
-DMA
-    ↓
-ETH IRQ
-    ↓
-Ethernet Driver RX event
-    ↓
-CMSIS-RTOS2 Thread Flag
-    ↓
-Ethernet RX Task
-    ↓
-Rx Frame Handler
-    ↓
-ethernetif
-    ↓
-LwIP
-    ↓
-Application
+Application / LwIP
+        ↓
+Frame Handler / ethernetif
+        ↓
+CMSIS-RTOS2 Adapter
+        ↓
+Ethernet Driver
+        ↓
+HAL ETH / DMA
 ```
 
-当前已验证到 `Rx Frame Handler`。
+Driver Core 不 include FreeRTOS/CMSIS-RTOS2；RTOS Adapter 是可选层。
 
-## 2. Driver Core 与 RTOS 的边界
+## 2. Task ownership
 
-Driver Core：
+Adapter 不创建 Task，也不隐藏 heap 使用。
 
 ```text
-Ethernet/Src/ethernet_driver.c
+Application / CubeMX
+→ Task object
+→ priority
+→ stack
+→ static/dynamic allocation
+
+Ethernet RTOS Adapter
+→ EthernetRtos_RxTask()
+→ task handle
+→ Thread Flag
+→ Receive drain
 ```
 
-不 include：
+当前 API：
 
 ```text
-FreeRTOS.h
-task.h
-cmsis_os2.h
+EthernetRtos_SetRxFrameHandler()
+EthernetRtos_IsReady()
+EthernetRtos_RxTask()
 ```
 
-Driver 只提供通用 RX complete 事件：
+Task priority / stack 当前参考值只是 bring-up 参数，不作为 Driver 固定值；最终应根据实际 stack high-water mark 和系统调度测量调整。
 
-```c
-void EthernetDriver_SetRxEventHandler(EthernetDriverRxEventHandler handler, void *context);
-```
+## 3. RX IRQ 路径
 
-`HAL_ETH_RxCpltCallback()` 在 ISR 上下文调用该轻量 handler。
-
-具体 RTOS notification 由可选 Adapter 实现：
+当前已验证：
 
 ```text
-Ethernet/RTOS/CMSIS_RTOS2/
-```
-
-## 3. ISR 约束
-
-ETH ISR 只允许：
-
-- `HAL_ETH_IRQHandler()`；
-- HAL RX complete callback；
-- 轻量状态记录；
-- RTOS ISR-safe notification；
-- 必要的上下文切换请求。
-
-禁止：
-
-- 协议解析；
-- UDP / TCP 业务；
-- 应用控制逻辑；
-- `printf`；
-- 动态内存；
-- 大量数据复制；
-- 无界循环；
-- 阻塞等待。
-
-当前 CMSIS-RTOS2 Adapter 在 RX event 中调用 `osThreadFlagsSet()`。当前 wrapper 在 ISR 内部最终使用 FreeRTOS FromISR API。
-
-## 4. 中断优先级
-
-当前 `FreeRTOSConfig.h`：
-
-```text
-configPRIO_BITS = 4
-configLIBRARY_LOWEST_INTERRUPT_PRIORITY = 15
-configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY = 5
-```
-
-当前参考 Demo：
-
-```text
-ETH_IRQn preemption priority = 5
-subpriority                  = 0
-```
-
-由于 ETH ISR 会调用 RTOS ISR-safe API，NVIC library priority 数值必须处于 FreeRTOS 允许调用系统 API 的范围。
-
-`5` 只是当前已验证参考值，不冻结为所有板子的固定配置。
-
-## 5. Task ownership
-
-RTOS Adapter 不创建 Task。
-
-应用 / CubeMX 负责：
-
-```text
-Task object
-priority
-stack
-static / dynamic allocation
-lifetime
-```
-
-Package 提供：
-
-```c
-void EthernetRtos_RxTask(void *argument);
-```
-
-当前 Demo 仍由 CubeMX 创建 `EthernetRxTask`，其生成入口只作为 wrapper：
-
-```text
-StartEthernetRxTask()
-→ 注册 Demo RxFrameHandler
+ETH_IRQHandler()
+→ HAL_ETH_IRQHandler()
+→ HAL_ETH_RxCpltCallback()
+→ Ethernet Driver generic RX event
+→ EthernetRtos_OnRxEvent()
+→ osThreadFlagsSet()
 → EthernetRtos_RxTask()
 ```
 
-最终是否推荐 CubeMX `As external` 还是 `As weak` 尚未冻结，需要用 CubeMX 6.18.1 实际生成比较。
+ISR 只做必要 HAL 处理和事件通知，不执行 Frame copy、协议解析、应用业务或 `printf`。
 
-## 6. RX Task 初始化
+当前 ETH IRQ priority = 5，与当前 `configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY = 5` 配合。这个数字属于 Reference Example，不冻结为通用配置。
 
-`EthernetRtos_RxTask()` 启动后：
+## 4. RX Task
+
+Task 启动时：
 
 ```text
 osThreadGetId()
-→ 保存自身 Task Handle
+→ 保存自身 handle
 → EthernetDriver_SetRxEventHandler()
-→ g_ready = true
-→ 等待 Thread Flag
+→ ready = true
 ```
 
-应用在启动 MAC/DMA 前可以通过：
+MAC/DMA Start 前应确认：
 
 ```c
-EthernetRtos_IsReady()
+EthernetRtos_IsReady() == true
 ```
 
-确认 RX runtime 已完成绑定。
+避免 MAC 已接收但 notification 尚未绑定。
 
-这样不依赖“RX Task priority 恰好高于 BootstrapTask”这一偶然时序。
-
-## 7. RX notification 与 drain
-
-一次 Thread Flag 不是“一帧计数器”。多个 RX IRQ 可以在 Task 得到 CPU 前合并成一个事件。
-
-因此 Task 被唤醒后必须：
+收到 Thread Flag 后必须 drain：
 
 ```text
 EthernetDriver_Receive()
-→ FRAME: 继续读取
-→ FRAME: 继续读取
-→ ...
-→ ETHERNET_RX_NONE: 停止 drain，重新等待事件
+→ frame
+EthernetDriver_Receive()
+→ frame
+...
+EthernetDriver_Receive()
+→ ETHERNET_RX_NONE
 ```
 
-不能写成“一次通知只调用一次 Receive”。
+Thread Flag 是事件位，不是 Packet Counter；多个 IRQ 可以合并成一次任务唤醒。
 
-当前 Adapter 已按该方式实现。
+## 5. Frame Handler
 
-## 8. Frame 向上交付
-
-Adapter API：
+应用通过：
 
 ```c
-void EthernetRtos_SetRxFrameHandler(EthernetRtosRxFrameHandler handler, void *context);
+EthernetRtos_SetRxFrameHandler(handler, context);
 ```
 
-Handler 在 Ethernet RX Task 上下文同步执行。
+在任务上下文接收完整 Frame。frame pointer 只在 Handler 调用期间有效，返回后不得继续持有；需要长期保存时由上层复制。
 
-ownership：
+Reference Example 的 `0x88B5` / 1000 Frame 计数属于 Demo 测试逻辑，不进入 Package。
+
+未来 ethernetif 可以在该任务上下文把 Frame 转换为 LwIP pbuf；具体 pbuf ownership 在 M3 再冻结。
+
+## 6. CubeMX Task generation
+
+当前 Reference Example 的已验证版本仍使用 CubeMX 生成的 `StartEthernetRxTask()` wrapper，在 USER CODE 中注册 Demo Handler 后调用 `EthernetRtos_RxTask()`。
+
+产品化后的倾向方案：
 
 ```text
-frame pointer
-只在 Handler 调用期间有效
-Handler 返回后不得继续持有
+Task Entry : EthernetRtos_RxTask
+Generation : As weak
 ```
 
-如果上层需要长期保存 Frame，需要自行 copy。
+CubeMX 6.18.1 的同版本生成结果已确认 `As weak` 会生成 `__weak` Entry，并保留 CubeMX 对 Task attributes / `osThreadNew()` 的管理。这与 D021 边界一致。
 
-当前 Demo 的 `0x88B5` 测试统计放在 `freertos.c` 的 Demo Handler 中，不进入 Driver Package。
+但当前 Example 尚未实际切换后执行 Generate Code + Build + On-board，因此 D023 仍为 Proposed。不要直接手改 generated `freertos.c` outside USER CODE。
 
-未来 LwIP 接入时，可以由 Handler 创建/填充 pbuf 并交给 `ethernetif`，但具体 pbuf ownership 和 TCP/IP thread 边界将在 LwIP 工作单元中冻结。
+## 7. 非 CubeMX 用户
 
-## 9. RX Buffer ownership
+可以直接使用 RTOS API 创建 Task，入口指向 `EthernetRtos_RxTask()`。Driver Package 不依赖 `.ioc` 的具体 Task 名或 CubeMX 生成的 Task Handle 变量。
 
-Driver 内部当前 copy-based：
+## 8. TX Runtime
+
+当前 TX 仍使用 polling `HAL_ETH_Transmit()`。尚未实现：
 
 ```text
-DMA RX Buffer
-→ HAL_ETH_ReadData()
-→ HAL_ETH_RxLinkCallback()
-→ memcpy Driver CPU Frame
-→ 立即归还 DMA RX Buffer
-→ HAL 重建 Descriptor
-→ EthernetDriver_Receive() 复制给 RTOS Adapter CPU Frame
-→ Rx Frame Handler
+HAL_ETH_Transmit_IT()
+→ TX IRQ
+→ HAL_ETH_ReleaseTxPacket()
+→ TxFree callback
+→ TX Buffer recycle
 ```
 
-上层从不持有 DMA RX Buffer。
+异步 TX completion ownership 必须单独设计，不能用 RX 的 Thread Flag 方案顺手推断。
 
-## 10. TX
+## 9. Error / Link lifecycle
 
-当前 TX 仍为 polling：
+尚未完成：
+
+- DMA fatal / RBU / timeout recovery；
+- RX/TX drop/error 统计；
+- Link Down 时 MAC stop；
+- Link Up 后 speed/duplex reconfigure/start；
+- 初始 Auto-negotiation 超时后晚到 Link Up 的完整启动路径。
+
+当前 PHY Link 继续轮询，200 ms 只是 bring-up 值。
+
+## 10. LwIP
+
+尚未实现：ethernetif、netif state、ARP、IPv4、Ping、UDP、TCP。
+
+进入 LwIP 后仍保持：
 
 ```text
-Caller Frame
-→ memcpy Static TX DMA Buffer
-→ HAL_ETH_Transmit(timeout)
-→ HAL_OK
-→ release TX Buffer
+LwIP
+→ ethernetif
+→ Ethernet Driver / RTOS runtime
 ```
 
-尚未实现：
+Driver Core 不引入 LwIP API。
 
-- `HAL_ETH_Transmit_IT()`；
-- TX complete task notification；
-- `HAL_ETH_ReleaseTxPacket()` / Tx free callback ownership；
-- error / timeout 后统一回收。
+## 11. 当前验证
 
-因此“FreeRTOS 异步 RX 已实现”不等于“异步收发均完成”。
-
-## 11. PHY Link 管理
-
-PHY Driver 自身不依赖 RTOS。
-
-当前 Bootstrap 首次 Auto-negotiation 成功后：
+On-board Verified：
 
 ```text
-Lan8720Status
-→ Speed / Duplex 映射
-→ EthernetRtos_IsReady()
-→ EthernetDriver_ConfigureLink()
-→ EthernetDriver_Start()
+ETH IRQ
+→ Driver RX event
+→ CMSIS-RTOS2 Thread Flag
+→ RX Task drain
+→ Frame Handler
+→ RX Buffer recycle
 ```
 
-长期 PHY polling 当前仍只记录 Link 变化，没有完成：
+连续 1000 / 1000，PC 约 5 ms / Frame。该结果不代表高负载或长时间压力测试。
 
-```text
-Link Down
-→ HAL_ETH_Stop_IT()
-→ pending ownership cleanup
-→ Link Up
-→ MAC reconfigure
-→ HAL_ETH_Start_IT()
-```
-
-完整 Link lifecycle 尚未冻结。
-
-## 12. LwIP
-
-尚未接入，因此以下仍未冻结：
-
-- `NO_SYS`；
-- `tcpip_thread` 参数；
-- Socket / Netconn / Raw API；
-- pbuf / memp；
-- LwIP heap / pool；
-- RX Frame Handler 与 `ethernetif` / tcpip thread 的具体调用边界。
-
-## 13. 任务资源与测量
-
-当前 Demo `EthernetRxTask` 使用：
-
-```text
-Priority   = AboveNormal
-Stack      = 256 words / 1024 B
-Allocation = Dynamic
-```
-
-这些是 bring-up 参数，不是最终冻结值。
-
-后续至少测量：
-
-- stack high-water mark；
-- 网络负载下 Task runtime；
-- RX/TX drop；
-- DMA error；
-- CPU load；
-- Link 抖动 / 重连行为。
-
-## 14. 当前验证状态
-
-| 项目 | 状态 |
-| --- | --- |
-| FreeRTOS / CMSIS-RTOS2 基础环境 | 已实现 |
-| Polling Raw TX | 已实现并上板验证 |
-| Polling Raw RX | 单帧 + 1000 / 1000 上板验证 |
-| ETH IRQ | 已实现并上板验证 |
-| CMSIS-RTOS2 RX Thread Flag | 已实现并上板验证 |
-| RX Task drain | 已实现并上板验证 |
-| Async RX 1000 / 1000 | 已上板验证，重构前固件 `6b2f1f4...` |
-| Package 化 RTOS Adapter | Static Review，待重新 build / 上板 |
-| Async TX completion | 未实现 |
-| DMA error / drop 统计 | 未实现 |
-| 完整 Link lifecycle | 未实现 |
-| `ethernetif` / LwIP | 未实现 |
-| Ping / UDP / TCP | 未实现 |
+第二阶段将 Reference Example 移入 `examples/` 后仍需重新 Build / On-board，当前目录移动提交只能标记 Static Review。

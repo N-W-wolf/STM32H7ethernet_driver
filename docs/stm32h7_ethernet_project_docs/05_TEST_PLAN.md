@@ -1,13 +1,10 @@
 # Test Plan
 
 - 状态：Active
-- 说明：本文件定义各里程碑验收边界。所有结果区分 Static Review、Build Verified、On-board Verified 和 Measured。
+- 说明：结果始终区分 Static Review、Build Verified、On-board Verified、Measured。
 
 ## M0：项目基线
 
-通过条件：
-
-- [ ] Debug / Release fresh build 可重复记录；
 - [x] FreeRTOS 最小任务正常；
 - [x] USART1 调试输出正常；
 - [x] CubeMX 生成代码与手工代码边界明确；
@@ -15,61 +12,33 @@
 
 ## M1：PHY Bring-up
 
-### 已通过
+已通过：
 
 - [x] PHY Reset；
-- [x] MDIO Read；
-- [x] MDIO Write；
-- [x] PHY ID；
-- [x] PHY Address；
-- [x] Strap；
+- [x] MDIO Read / Write；
+- [x] PHY ID / Address / Strap；
 - [x] Auto-negotiation；
 - [x] Link Up / Down；
 - [x] 100 Mbit/s；
 - [x] Full Duplex；
-- [x] 单次网线拔出 / 插回恢复。
+- [x] 单次网线拔插状态恢复。
 
-上板结果：
-
-```text
-PHY ID1     = 0x0007
-PHY ID2     = 0xC0F1
-Reg18       = 0x60E0
-PHY Address = 0
-MODE        = 111
-Speed       = 100M
-Duplex      = Full
-```
-
-### 补充覆盖
-
-- [ ] 10 Mbit/s 实际链路；
-- [ ] Half Duplex；
-- [ ] 连续多次插拔；
-- [ ] 多次 MCU Reset；
-- [ ] 多次 PHY Reset；
-- [ ] 25 MHz PHY 晶振 Measured；
-- [ ] PA1 / RMII_REF_CLK Measured。
+补充覆盖：10 Mbit/s、Half Duplex、连续快速插拔、多次 Reset、25 MHz 晶振与 RMII REF_CLK 独立测量。
 
 ## M2：MAC / DMA
 
 ### 1. Memory / Descriptor / Buffer
 
-- [x] Ethernet DMA 可达 SRAM选择 — Static Review；
-- [x] SRAM3 独立 `RAM_ETH` — Build Verified；
-- [x] RX Descriptor `0x30040000` — Build / Map Verified；
-- [x] TX Descriptor `0x30040080` — Build / Map Verified；
-- [x] Descriptor linker ASSERT — Build Verified；
-- [x] MPU 配置 — Static Review + Build Verified；
-- [x] SRAM3 clock 在 `MX_ETH_Init()` 前准备 — Static Review + Build Verified；
-- [x] RX Pool `0x30042000 / 4 × 1536 B` — Build / Map Verified；
-- [x] TX Pool `0x30044000 / 4 × 1536 B` — Build / Map Verified；
-- [x] RX ownership / recycle — Static Review + On-board Verified；
-- [x] TX polling success-path ownership — Static Review + On-board Verified；
+- [x] DMA 可达 SRAM选择 — Static Review；
+- [x] RAM_ETH / Descriptor / Pool linker — Build / Map Verified；
+- [x] MPU — Static Review + Build Verified；
+- [x] SRAM3 clock 在 MX_ETH_Init 前准备；
+- [x] RX ownership / recycle — On-board Verified；
+- [x] TX polling success ownership — On-board Verified；
 - [ ] TX error / timeout 完整 recovery；
-- [ ] D-Cache 开启后的数据路径。
+- [ ] D-Cache-on。
 
-历史 map：
+基线布局：
 
 ```text
 DMARxDscrTab = 0x30040000
@@ -78,182 +47,127 @@ DMATxDscrTab = 0x30040080
 .eth_dma_tx  = 0x30044000 / 0x1800
 ```
 
-### 2. Polling Raw Frame
+### 2. Raw Frame
 
-- [x] MAC Speed / Duplex 与 PHY 同步；
 - [x] Raw TX；
 - [x] Raw RX 单帧；
-- [x] RX Buffer 连续 recycle。
+- [x] polling RX 1000 / 1000；
+- [x] async RX 1000 / 1000。
 
-Polling 测试固件：
+当前测试 EtherType `0x88B5`，PC 间隔约 5 ms / Frame。1000 / 1000 只验证基础连续 ownership，不是 Stress。
 
-```text
-e50bf6a4ce9c3763e6b863b5982522b4e60ac197
-```
+### 3. ETH IRQ + CMSIS-RTOS2
 
-TX：
-
-```text
-Source      = 00:80:E1:00:00:00
-Destination = FF:FF:FF:FF:FF:FF
-EtherType   = 0x88B5
-Length      = 60 B
-```
-
-PC `tcpdump` 实际抓包成功。
-
-RX：
-
-```text
-PC → STM32
-EtherType = 0x88B5
-Length    = 60 B
-```
-
-结果：
-
-```text
-Single RX      PASS
-Continuous RX  1000 / 1000 PASS
-PC interval    ≈ 5 ms / Frame
-```
-
-该结果只验证基础 Descriptor / Buffer recycle，不是吞吐压力测试。
-
-### 3. ETH IRQ + FreeRTOS Async RX
-
-- [x] ETH_IRQn 配置；
+- [x] ETH_IRQn；
 - [x] IRQ priority 满足当前 FreeRTOS FromISR 约束；
-- [x] `ETH_IRQHandler()` → `HAL_ETH_IRQHandler()`；
+- [x] `ETH_IRQHandler()` → HAL handler；
 - [x] `HAL_ETH_Start_IT()`；
-- [x] RX complete callback；
-- [x] CMSIS-RTOS2 Thread Flag；
-- [x] RX Task 在任务上下文读取 Frame；
-- [x] 一次唤醒持续 drain 到 `ETHERNET_RX_NONE`；
-- [x] 连续 1000 / 1000 async RX。
+- [x] HAL RX complete → Driver RX event；
+- [x] Thread Flag；
+- [x] RX Task task-context receive；
+- [x] 每次唤醒 drain 到 `ETHERNET_RX_NONE`；
+- [x] async RX 1000 / 1000。
 
-异步 RX 原始测试固件：
+### 4. Driver Package 第一轮回归
 
-```text
-6b2f1f4bd153e6e4d119be6679a8dea55e7d4ccd
-```
+- [x] Debug Build；
+- [x] PHY / MAC startup；
+- [x] Package 化后 async RX 1000 / 1000。
 
-上板实际结果：
+### 5. 第二阶段 Reference Example 目录回归
 
-```text
-[ETH] EthernetRxTask started
-[ETH] BootstrapTask started
-[ETH] PHY ready
-[ETH] Auto-negotiation started
-[ETH] Link up
-[ETH] Speed=100M
-[ETH] Duplex=Full
-[ETH] MAC/DMA started
-[ETH] Async RX test 1000/1000 PASS, total=1000
-```
-
-验证等级：On-board Verified。
-
-该测试证明当前 IRQ → Thread Flag → RX Task → Receive → Buffer recycle 可持续工作 1000 帧，不代表高负载或长时间稳定性。
-
-### 4. Driver Package 化回归
-
-当前 Package 重构把通用代码收敛到：
+Reference Example 当前路径：
 
 ```text
-Ethernet/
+examples/STM32H743_LAN8720_FreeRTOS/
 ```
 
-并新增 Port + CMSIS-RTOS2 Adapter。
+必须重新执行：
 
-已完成：
+```bash
+cd examples/STM32H743_LAN8720_FreeRTOS
+./build.sh Debug --fresh
+./build.sh Release --fresh
+```
 
-- [x] Debug build；
-- [x] PHY / MAC 启动回归；
-- [x] Package 化后的 Async RX 1000 / 1000；
-- [x] 修正 `ethernet_port.h` HAL 头文件递归包含问题；
-- [x] 本次上板过程中未出现 HardFault，RX 测试正常结束。
+检查：
 
-仍需补充：
+- [ ] Debug fresh Build；
+- [ ] Release fresh Build；
+- [ ] map / ELF RX/TX Descriptor；
+- [ ] map / ELF RX/TX Pool；
+- [ ] PHY / MAC startup；
+- [ ] async RX 1000 / 1000；
+- [ ] 无新增 HardFault / DMA Error；
+- [ ] CubeMX Generate Code 后目录与 USER CODE 边界保持正确。
 
-- [ ] `./build.sh Release --fresh`；
-- [ ] 当前 Package 提交下重新检查 map / ELF Descriptor 地址；
-- [ ] 当前 Package 提交下重新检查 map / ELF RX/TX Pool 地址与大小；
-- [ ] CubeMX Generate Code 后检查 USER CODE / Port / RTOS Adapter 边界；
-- [ ] 实测 CubeMX `As external` / `As weak` Task 生成方式。
+第二阶段目录迁移提交在这些测试完成前仅标记 Static Review。
 
-因此当前 Package 化可以标记 Debug Build Verified + On-board Verified，但不能把 Release / 新提交 map 再检查写成已经完成。
+### 6. CubeMX Task generation 回归
 
-### 5. M2 尚未完成
+D023 Proposed 方案：
+
+```text
+Entry      = EthernetRtos_RxTask
+Generation = As weak
+```
+
+本 Example 上需要：
+
+- [ ] CubeMX 6.18.1 UI 修改 Task；
+- [ ] Generate Code；
+- [ ] `.ioc` diff 符合预期；
+- [ ] `freertos.c` 生成 `__weak` Task Entry；
+- [ ] CubeMX 仍管理 Task attributes / `osThreadNew()`；
+- [ ] Package 强定义链接无冲突；
+- [ ] Debug / Release Build；
+- [ ] async RX 1000 / 1000。
+
+完成后才能把 D023 从 Proposed 改成 Accepted。
+
+### 7. M2 仍未完成
 
 - [ ] Async TX completion；
 - [ ] RX/TX error / drop 统计；
 - [ ] DMA fatal / RBU / timeout recovery；
 - [ ] Link Down / Up 完整 MAC lifecycle；
-- [ ] 长时间 DMA；
-- [ ] 高负载无内存破坏；
 - [ ] Task stack high-water mark；
+- [ ] 长时间 / 高负载；
 - [ ] D-Cache 场景。
-
-M2 完整退出前至少需要 Async RX、Async TX 基础 ownership、关键错误可观测和异步 Raw Frame 数据路径稳定。
 
 ## M3：LwIP + Ping
 
-- [ ] `ethernetif`；
+- [ ] ethernetif；
 - [ ] Static IPv4；
 - [ ] ARP；
 - [ ] Ping；
-- [ ] 不同 Ping payload；
-- [ ] 持续 Ping；
-- [ ] Link / MCU / PC 重启恢复。
-
-退出条件：可长期稳定 Ping，无 HardFault、DMA Error、内存泄漏或明显 pbuf 异常。
+- [ ] 持续 Ping / Link 恢复。
 
 ## M4：UDP
 
 - [ ] UDP Echo；
-- [ ] 小包 / 接近 MTU 大包 / 随机长度；
-- [ ] 高频 RX / TX；
-- [ ] 双向通信；
+- [ ] 小包 / 接近 MTU；
+- [ ] 高频双向；
 - [ ] Link 恢复；
-- [ ] 长时间运行；
+- [ ] 长时间；
 - [ ] Drop / Error 统计。
 
 ## M5：TCP
 
-- [ ] Connect；
-- [ ] Send / Receive；
+- [ ] Connect / Send / Receive；
 - [ ] Disconnect / Reconnect；
-- [ ] Client crash；
-- [ ] Cable disconnect；
-- [ ] MCU reset；
+- [ ] Client crash / cable disconnect / MCU reset；
 - [ ] 长时间连接。
 
 ## M6：压力与通用化
 
 - [ ] 数小时持续 UDP；
-- [ ] 大量小包；
-- [ ] 大包；
-- [ ] 双向高负载；
+- [ ] 大量小包 / 大包 / 双向高负载；
 - [ ] 快速 Link Up / Down；
-- [ ] FreeRTOS stack high-water mark；
-- [ ] LwIP memory pool；
-- [ ] CPU load；
-- [ ] RX/TX drop；
-- [ ] DMA error；
-- [ ] 更换 STM32H7 板时以复制 `Ethernet/` + 修改 CubeMX / linker / Port 为主。
+- [ ] stack high-water mark；
+- [ ] LwIP memory pool / CPU load / RX/TX drop / DMA error；
+- [ ] 新 STM32H7 板以复制 `Ethernet/` + 配置 CubeMX/linker/Port 为主完成迁移。
 
 ## 测试记录要求
 
-每个测试最终记录：
-
-- 前置条件；
-- 固件 commit；
-- Cube / HAL 版本；
-- PC 工具；
-- 操作步骤；
-- 预期 / 实际结果；
-- 错误计数；
-- 是否通过；
-- 验证等级；
-- 必要的仪器测量。
+记录固件 commit、Cube/HAL 版本、前置条件、操作步骤、预期/实际、错误计数、验证等级；成功编译不等于功能上板验证。
