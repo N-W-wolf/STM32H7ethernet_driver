@@ -26,8 +26,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "board_ethernet.h"
 #include "ethernet_driver.h"
+#include "ethernet_port.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -91,7 +91,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-  BoardEthernet_PrepareDmaMemory();
+  EthernetPort_PrepareDmaMemory();
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -275,7 +275,7 @@ void Error_Handler(void)
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
   * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
+  * @param  line: source line number
   * @retval None
   */
 void assert_failed(uint8_t *file, uint32_t line)

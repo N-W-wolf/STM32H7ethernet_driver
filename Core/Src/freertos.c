@@ -29,8 +29,9 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#include "board_ethernet.h"
 #include "ethernet_driver.h"
+#include "ethernet_port.h"
+#include "ethernet_rtos.h"
 #include "lan8720.h"
 /* USER CODE END Includes */
 
@@ -51,7 +52,6 @@
 
 #define PHY_LINK_POLL_PERIOD_MS           200U
 
-#define ETHERNET_RX_EVENT_FLAG          (1UL << 0)
 #define ETHERNET_RX_TEST_ETHERTYPE      0x88B5U
 #define ETHERNET_RX_TEST_TARGET_COUNT   1000U
 /* USER CODE END PD */
@@ -63,8 +63,6 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-static uint8_t g_ethernet_rx_task_frame[ETHERNET_FRAME_BUFFER_SIZE];
-
 static uint32_t g_ethernet_rx_frame_count;
 static uint32_t g_ethernet_rx_test_frame_count;
 /* USER CODE END Variables */
@@ -86,6 +84,7 @@ const osThreadAttr_t EthernetRxTask_attributes = {
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 static bool EthernetBootstrap_StartMac(const Lan8720Status *phy_status);
+static void EthernetDemo_RxFrameHandler(const uint8_t *frame, uint16_t length, void *context);
 /* USER CODE END FunctionPrototypes */
 
 void StartBootstrapTask(void *argument);
@@ -158,7 +157,7 @@ void StartBootstrapTask(void *argument)
 
   /* MX_GPIO_Init() 已经将 PHY nRST 拉低。等待上电稳定后释放 PHY 硬件复位。 */
   osDelay(25U);
-  BoardEthernet_PhyResetRelease();
+  EthernetPort_PhyResetRelease();
 
   while (elapsed_ms < PHY_READY_TIMEOUT_MS)
   {
@@ -301,60 +300,11 @@ void StartBootstrapTask(void *argument)
 void StartEthernetRxTask(void *argument)
 {
   /* USER CODE BEGIN StartEthernetRxTask */
-  (void)argument;
+  EthernetRtos_SetRxFrameHandler(EthernetDemo_RxFrameHandler, NULL);
+
   printf("[ETH] EthernetRxTask started\r\n");
 
-  /* Infinite loop */
-  for(;;)
-  {
-    uint32_t flags = osThreadFlagsWait(ETHERNET_RX_EVENT_FLAG, osFlagsWaitAny, osWaitForever);
-
-    if ((flags & osFlagsError) != 0U)
-    {
-      printf("[ETH] RX task flag wait error\r\n");
-      osDelay(1U);
-      continue;
-    }
-
-    for (;;)
-    {
-      uint16_t frame_length = 0U;
-
-      EthernetRxResult result = EthernetDriver_Receive(
-          g_ethernet_rx_task_frame,
-          sizeof(g_ethernet_rx_task_frame),
-          &frame_length);
-
-      if (result == ETHERNET_RX_NONE)
-      {
-        break;
-      }
-
-      if (result == ETHERNET_RX_ERROR)
-      {
-        printf("[ETH] Async RX driver error\r\n");
-        break;
-      }
-
-      g_ethernet_rx_frame_count++;
-
-      if (frame_length >= 14U)
-      {
-        uint16_t ether_type = ((uint16_t)g_ethernet_rx_task_frame[12] << 8) | (uint16_t)g_ethernet_rx_task_frame[13];
-
-        if (ether_type == ETHERNET_RX_TEST_ETHERTYPE)
-        {
-          g_ethernet_rx_test_frame_count++;
-
-          if (g_ethernet_rx_test_frame_count == ETHERNET_RX_TEST_TARGET_COUNT)
-          {
-            printf("[ETH] Async RX test 1000/1000 PASS, total=%lu\r\n",
-                    (unsigned long)g_ethernet_rx_frame_count);
-          }
-        }
-      }
-    }
-  }
+  EthernetRtos_RxTask(argument);
   /* USER CODE END StartEthernetRxTask */
 }
 
@@ -363,10 +313,10 @@ void StartEthernetRxTask(void *argument)
 /**
  * @brief  根据 PHY 协商结果配置并启动 Ethernet MAC/DMA。
  *
- * @param[in] phy_status PHY 当前链路状态。
+ * @param[in] phy_status PHY 当��链路状态。
  *
  * @retval true   MAC 配置并启动成功。
- * @retval false  PHY 状态无效或 Ethernet 操作失败。
+ * @retval false  PHY 状态无效、RX Runtime 未就绪或 Ethernet 操作失败。
  */
 static bool EthernetBootstrap_StartMac(const Lan8720Status *phy_status)
 {
@@ -377,6 +327,12 @@ static bool EthernetBootstrap_StartMac(const Lan8720Status *phy_status)
       !phy_status->link_up ||
       !phy_status->auto_negotiation_complete)
   {
+    return false;
+  }
+
+  if (!EthernetRtos_IsReady())
+  {
+    printf("[ETH] Ethernet RX runtime not ready\r\n");
     return false;
   }
 
@@ -424,17 +380,39 @@ static bool EthernetBootstrap_StartMac(const Lan8720Status *phy_status)
 }
 
 /**
- * @brief Ethernet RX complete ISR callback.
+ * @brief  Demo RX Frame 处理函数。
  */
-void HAL_ETH_RxCpltCallback(ETH_HandleTypeDef *heth)
+static void EthernetDemo_RxFrameHandler(const uint8_t *frame, uint16_t length, void *context)
 {
-  (void)heth;
+  uint16_t ether_type;
 
-  if (EthernetRxTaskHandle != NULL)
+  (void)context;
+
+  if (frame == NULL)
   {
-    (void)osThreadFlagsSet(
-        EthernetRxTaskHandle,
-        ETHERNET_RX_EVENT_FLAG);
+    return;
+  }
+
+  g_ethernet_rx_frame_count++;
+
+  if (length < 14U)
+  {
+    return;
+  }
+
+  ether_type = ((uint16_t)frame[12] << 8) | (uint16_t)frame[13];
+
+  if (ether_type != ETHERNET_RX_TEST_ETHERTYPE)
+  {
+    return;
+  }
+
+  g_ethernet_rx_test_frame_count++;
+
+  if (g_ethernet_rx_test_frame_count == ETHERNET_RX_TEST_TARGET_COUNT)
+  {
+    printf("[ETH] Async RX test 1000/1000 PASS, total=%lu\r\n",
+           (unsigned long)g_ethernet_rx_frame_count);
   }
 }
 

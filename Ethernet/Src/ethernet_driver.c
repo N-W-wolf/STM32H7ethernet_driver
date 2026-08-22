@@ -5,8 +5,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "ethernet_port.h"
 #include "stm32h7xx_hal.h"
-#include "eth.h"
 
 #define ETHERNET_DMA_BUFFER_SIZE  ETHERNET_FRAME_BUFFER_SIZE
 #define ETHERNET_DMA_ALIGNMENT    32U
@@ -38,6 +38,8 @@ static bool g_rx_buffer_in_use[ETH_RX_DESC_CNT];
 static bool g_tx_buffer_in_use[ETH_TX_DESC_CNT];
 
 static EthernetRxFrameStorage g_rx_frame;
+static EthernetDriverRxEventHandler g_rx_event_handler;
+static void *g_rx_event_context;
 
 _Static_assert((ETHERNET_DMA_BUFFER_SIZE % ETHERNET_DMA_ALIGNMENT) == 0U,
                "Ethernet DMA buffer size must be cache-line aligned");
@@ -132,7 +134,7 @@ static bool EthernetDriver_AppendRxData(const uint8_t *buffer, uint16_t length)
  * @brief  初始化 Ethernet Driver 的软件 Buffer ownership 状态。
  *
  * @details
- * 不初始化 DMA 硬件，只清理 RX/TX Buffer Pool 的软件状态。
+ * 不初始化 DMA 硬件，只清理 RX/TX Buffer Pool 和 RX event handler 的软件状态。
  * 必须在 Ethernet MAC/DMA Start 前调用。
  */
 void EthernetDriver_Init(void)
@@ -142,6 +144,28 @@ void EthernetDriver_Init(void)
 
     g_rx_frame.length = 0U;
     g_rx_frame.valid = false;
+    g_rx_event_handler = NULL;
+    g_rx_event_context = NULL;
+}
+
+/**
+ * @brief  注册 RX complete ISR 事件处理函数。
+ *
+ * @details
+ * 建议在 MAC/DMA Start 前完成注册。handler 在 ISR 上下文执行，
+ * 只能进行轻量事件转发或 RTOS FromISR-safe 通知。
+ */
+void EthernetDriver_SetRxEventHandler(EthernetDriverRxEventHandler handler, void *context)
+{
+    if (handler == NULL)
+    {
+        g_rx_event_handler = NULL;
+        g_rx_event_context = NULL;
+        return;
+    }
+
+    g_rx_event_context = context;
+    g_rx_event_handler = handler;
 }
 
 /**
@@ -151,18 +175,19 @@ void EthernetDriver_Init(void)
  * @param[in] duplex  双工模式。
  *
  * @retval true   MAC 配置成功。
- * @retval false  参数或 HAL 状态无效。
+ * @retval false  Port、参数或 HAL 状态无效。
  */
 bool EthernetDriver_ConfigureLink(EthernetLinkSpeed speed, EthernetDuplexMode duplex)
 {
+    ETH_HandleTypeDef *eth_handle = EthernetPort_GetHandle();
     ETH_MACConfigTypeDef mac_config = {0};
 
-    if (heth.gState != HAL_ETH_STATE_READY)
+    if ((eth_handle == NULL) || (eth_handle->gState != HAL_ETH_STATE_READY))
     {
         return false;
     }
 
-    if (HAL_ETH_GetMACConfig(&heth, &mac_config) != HAL_OK)
+    if (HAL_ETH_GetMACConfig(eth_handle, &mac_config) != HAL_OK)
     {
         return false;
     }
@@ -195,23 +220,25 @@ bool EthernetDriver_ConfigureLink(EthernetLinkSpeed speed, EthernetDuplexMode du
             return false;
     }
 
-    return HAL_ETH_SetMACConfig(&heth, &mac_config) == HAL_OK;
+    return HAL_ETH_SetMACConfig(eth_handle, &mac_config) == HAL_OK;
 }
 
 /**
- * @brief  启动 Ethernet MAC 和 DMA。
+ * @brief  以中断模式启动 Ethernet MAC 和 DMA。
  *
  * @retval true   启动成功。
- * @retval false  HAL 状态错误或启动失败。
+ * @retval false  Port、HAL 状态错误或启动失败。
  */
 bool EthernetDriver_Start(void)
 {
-    if (heth.gState != HAL_ETH_STATE_READY)
+    ETH_HandleTypeDef *eth_handle = EthernetPort_GetHandle();
+
+    if ((eth_handle == NULL) || (eth_handle->gState != HAL_ETH_STATE_READY))
     {
         return false;
     }
 
-    return HAL_ETH_Start_IT(&heth) == HAL_OK;
+    return HAL_ETH_Start_IT(eth_handle) == HAL_OK;
 }
 
 /**
@@ -232,15 +259,17 @@ bool EthernetDriver_Start(void)
  */
 bool EthernetDriver_Transmit(const uint8_t *frame, uint16_t length, uint32_t timeout_ms)
 {
+    ETH_HandleTypeDef *eth_handle = EthernetPort_GetHandle();
     ETH_BufferTypeDef hal_buffer = {0};
     ETH_TxPacketConfigTypeDef tx_config = {0};
     uint8_t *dma_buffer;
     HAL_StatusTypeDef hal_status;
 
-    if ((frame == NULL) ||
+    if ((eth_handle == NULL) ||
+        (frame == NULL) ||
         (length < 14U) ||
         (length > ETHERNET_DMA_BUFFER_SIZE) ||
-        (heth.gState != HAL_ETH_STATE_STARTED))
+        (eth_handle->gState != HAL_ETH_STATE_STARTED))
     {
         return false;
     }
@@ -268,7 +297,7 @@ bool EthernetDriver_Transmit(const uint8_t *frame, uint16_t length, uint32_t tim
     tx_config.CRCPadCtrl = ETH_CRC_PAD_INSERT;
     tx_config.pData = dma_buffer;
 
-    hal_status = HAL_ETH_Transmit(&heth, &tx_config, timeout_ms);
+    hal_status = HAL_ETH_Transmit(eth_handle, &tx_config, timeout_ms);
 
     if (hal_status == HAL_OK)
     {
@@ -280,7 +309,7 @@ bool EthernetDriver_Transmit(const uint8_t *frame, uint16_t length, uint32_t tim
 }
 
 /**
- * @brief  以 polling 模式读取一个完整 Ethernet Frame。
+ * @brief  读取一个完整 Ethernet Frame。
  *
  * @param[out] frame     接收 Frame 的调用者 Buffer。
  * @param[in]  capacity  调用者 Buffer 容量。
@@ -288,24 +317,26 @@ bool EthernetDriver_Transmit(const uint8_t *frame, uint16_t length, uint32_t tim
  *
  * @retval ETHERNET_RX_FRAME  成功读取一个完整 Frame。
  * @retval ETHERNET_RX_NONE   当前没有完整 Frame。
- * @retval ETHERNET_RX_ERROR  参数、状态或 RX Frame 无效。
+ * @retval ETHERNET_RX_ERROR  Port、参数、状态或 RX Frame 无效。
  */
 EthernetRxResult EthernetDriver_Receive(uint8_t *frame, uint16_t capacity, uint16_t *length)
 {
+    ETH_HandleTypeDef *eth_handle = EthernetPort_GetHandle();
     void *app_buffer = NULL;
     HAL_StatusTypeDef hal_status;
 
-    if ((frame == NULL) ||
+    if ((eth_handle == NULL) ||
+        (frame == NULL) ||
         (length == NULL) ||
         (capacity == 0U) ||
-        (heth.gState != HAL_ETH_STATE_STARTED))
+        (eth_handle->gState != HAL_ETH_STATE_STARTED))
     {
         return ETHERNET_RX_ERROR;
     }
 
     *length = 0U;
 
-    hal_status = HAL_ETH_ReadData(&heth, &app_buffer);
+    hal_status = HAL_ETH_ReadData(eth_handle, &app_buffer);
 
     if (hal_status != HAL_OK)
     {
@@ -363,11 +394,6 @@ void HAL_ETH_RxAllocateCallback(uint8_t **buffer)
  * @details
  * HAL_ETH_ReadData() 每处理一个 RX Descriptor 都会调用本函数。
  * DMA Buffer 完成复制后立即归还 RX Pool，使 Descriptor 可以重新获取 Buffer。
- *
- * @param[in,out] pStart HAL 应用 Packet 起始对象。
- * @param[in,out] pEnd   HAL 应用 Packet 结束对象。
- * @param[in]     buffer DMA RX Buffer。
- * @param[in]     length 当前 Buffer 中的有效数据长度。
  */
 void HAL_ETH_RxLinkCallback(void **pStart, void **pEnd, uint8_t *buffer, uint16_t length)
 {
@@ -401,4 +427,23 @@ void HAL_ETH_RxLinkCallback(void **pStart, void **pEnd, uint8_t *buffer, uint16_
     }
 
     *pEnd = &g_rx_frame;
+}
+
+/**
+ * @brief  HAL RX complete callback。
+ *
+ * @details
+ * 仅把中断事件转交给注册的上层事件处理函数，不读取 Frame。
+ */
+void HAL_ETH_RxCpltCallback(ETH_HandleTypeDef *heth)
+{
+    EthernetDriverRxEventHandler handler = g_rx_event_handler;
+    void *context = g_rx_event_context;
+
+    (void)heth;
+
+    if (handler != NULL)
+    {
+        handler(context);
+    }
 }

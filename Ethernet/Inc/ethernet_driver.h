@@ -15,9 +15,9 @@ extern "C" {
  */
 typedef enum
 {
-    ETHERNET_RX_NONE = 0,   // 没有包
-    ETHERNET_RX_FRAME,      // 收到完整包
-    ETHERNET_RX_ERROR       // 内部异常
+    ETHERNET_RX_NONE = 0,
+    ETHERNET_RX_FRAME,
+    ETHERNET_RX_ERROR
 } EthernetRxResult;
 
 /**
@@ -34,11 +34,21 @@ typedef enum
  */
 typedef enum
 {
-    ETHERNET_DUPLEX_HALF = 0,   // 半双工
-    ETHERNET_DUPLEX_FULL        // 全双工
+    ETHERNET_DUPLEX_HALF = 0,
+    ETHERNET_DUPLEX_FULL
 } EthernetDuplexMode;
 
+/**
+ * @brief RX complete 事件处理函数。
+ *
+ * @details
+ * 该回调由 Ethernet HAL RX complete callback 在 ISR 上下文触发。
+ * 实现必须保持短小，不得阻塞、打印日志或处理协议业务。
+ */
+typedef void (*EthernetDriverRxEventHandler)(void *context);
+
 void EthernetDriver_Init(void);
+void EthernetDriver_SetRxEventHandler(EthernetDriverRxEventHandler handler, void *context);
 bool EthernetDriver_ConfigureLink(EthernetLinkSpeed speed, EthernetDuplexMode duplex);
 bool EthernetDriver_Start(void);
 bool EthernetDriver_Transmit(const uint8_t *frame, uint16_t length, uint32_t timeout_ms);
