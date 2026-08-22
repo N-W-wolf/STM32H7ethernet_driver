@@ -7,14 +7,14 @@
 *.code-workspace
 
 # STM32CubeMX auxiliary metadata (.ioc is kept as project source)
-/.mxproject
+**/.mxproject
 
 # Build directories
-/build/
-/Debug/
-/Release/
-/cmake-build-*/
-/out/
+**/build/
+**/Debug/
+**/Release/
+**/cmake-build-*/
+**/out/
 
 # Compiler intermediate files
 *.o
@@ -44,9 +44,9 @@ build.ninja
 .ninja_log
 
 # STM32CubeIDE and Eclipse local metadata
-/.settings/
-/.project
-/.cproject
+**/.settings/
+**/.project
+**/.cproject
 *.launch
 
 # Local documentation copies (keep Markdown project documentation)
