@@ -50,6 +50,10 @@
 #define AUTO_NEGOTIATION_POLL_PERIOD_MS   100U
 
 #define PHY_LINK_POLL_PERIOD_MS           200U
+
+#define ETHERNET_RX_EVENT_FLAG          (1UL << 0)
+#define ETHERNET_RX_TEST_ETHERTYPE      0x88B5U
+#define ETHERNET_RX_TEST_TARGET_COUNT   1000U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -59,7 +63,10 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+static uint8_t g_ethernet_rx_task_frame[ETHERNET_FRAME_BUFFER_SIZE];
 
+static uint32_t g_ethernet_rx_frame_count;
+static uint32_t g_ethernet_rx_test_frame_count;
 /* USER CODE END Variables */
 /* Definitions for BootstrapTask */
 osThreadId_t BootstrapTaskHandle;
@@ -68,6 +75,13 @@ const osThreadAttr_t BootstrapTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for EthernetRxTask */
+osThreadId_t EthernetRxTaskHandle;
+const osThreadAttr_t EthernetRxTask_attributes = {
+  .name = "EthernetRxTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -75,6 +89,7 @@ static bool EthernetBootstrap_StartMac(const Lan8720Status *phy_status);
 /* USER CODE END FunctionPrototypes */
 
 void StartBootstrapTask(void *argument);
+void StartEthernetRxTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -107,6 +122,9 @@ void MX_FREERTOS_Init(void) {
   /* Create the thread(s) */
   /* creation of BootstrapTask */
   BootstrapTaskHandle = osThreadNew(StartBootstrapTask, NULL, &BootstrapTask_attributes);
+
+  /* creation of EthernetRxTask */
+  EthernetRxTaskHandle = osThreadNew(StartEthernetRxTask, NULL, &EthernetRxTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -273,8 +291,74 @@ void StartBootstrapTask(void *argument)
   /* USER CODE END StartBootstrapTask */
 }
 
-/* Private application code --------------------------------------------------*/
+/* USER CODE BEGIN Header_StartEthernetRxTask */
+/**
+* @brief Function implementing the EthernetRxTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartEthernetRxTask */
+void StartEthernetRxTask(void *argument)
+{
+  /* USER CODE BEGIN StartEthernetRxTask */
+  (void)argument;
+  printf("[ETH] EthernetRxTask started\r\n");
 
+  /* Infinite loop */
+  for(;;)
+  {
+    uint32_t flags = osThreadFlagsWait(ETHERNET_RX_EVENT_FLAG, osFlagsWaitAny, osWaitForever);
+
+    if ((flags & osFlagsError) != 0U)
+    {
+      printf("[ETH] RX task flag wait error\r\n");
+      osDelay(1U);
+      continue;
+    }
+
+    for (;;)
+    {
+      uint16_t frame_length = 0U;
+
+      EthernetRxResult result = EthernetDriver_Receive(
+          g_ethernet_rx_task_frame,
+          sizeof(g_ethernet_rx_task_frame),
+          &frame_length);
+
+      if (result == ETHERNET_RX_NONE)
+      {
+        break;
+      }
+
+      if (result == ETHERNET_RX_ERROR)
+      {
+        printf("[ETH] Async RX driver error\r\n");
+        break;
+      }
+
+      g_ethernet_rx_frame_count++;
+
+      if (frame_length >= 14U)
+      {
+        uint16_t ether_type = ((uint16_t)g_ethernet_rx_task_frame[12] << 8) | (uint16_t)g_ethernet_rx_task_frame[13];
+
+        if (ether_type == ETHERNET_RX_TEST_ETHERTYPE)
+        {
+          g_ethernet_rx_test_frame_count++;
+
+          if (g_ethernet_rx_test_frame_count == ETHERNET_RX_TEST_TARGET_COUNT)
+          {
+            printf("[ETH] Async RX test 1000/1000 PASS, total=%lu\r\n",
+                    (unsigned long)g_ethernet_rx_frame_count);
+          }
+        }
+      }
+    }
+  }
+  /* USER CODE END StartEthernetRxTask */
+}
+
+/* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 /**
  * @brief  根据 PHY 协商结果配置并启动 Ethernet MAC/DMA。
@@ -339,4 +423,20 @@ static bool EthernetBootstrap_StartMac(const Lan8720Status *phy_status)
   return true;
 }
 
+/**
+ * @brief Ethernet RX complete ISR callback.
+ */
+void HAL_ETH_RxCpltCallback(ETH_HandleTypeDef *heth)
+{
+  (void)heth;
+
+  if (EthernetRxTaskHandle != NULL)
+  {
+    (void)osThreadFlagsSet(
+        EthernetRxTaskHandle,
+        ETHERNET_RX_EVENT_FLAG);
+  }
+}
+
 /* USER CODE END Application */
+

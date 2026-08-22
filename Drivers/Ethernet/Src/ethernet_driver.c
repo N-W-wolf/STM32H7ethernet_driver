@@ -211,7 +211,7 @@ bool EthernetDriver_Start(void)
         return false;
     }
 
-    return HAL_ETH_Start(&heth) == HAL_OK;
+    return HAL_ETH_Start_IT(&heth) == HAL_OK;
 }
 
 /**
